@@ -8,29 +8,21 @@ permissions:
   id-token: write
 
 jobs:
-  destroy:
-    name: Terragrunt run-all destroy (us-east-1)
+  destroy-cloudfront:
+    name: Destroy cloudfront
     runs-on: ubuntu-latest
-
     defaults:
       run:
-        working-directory: live/dev/us-east-1
-
+        working-directory: live/dev/us-east-1/cloudfront
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-
       - name: Install Terragrunt
         run: |
           TG_VERSION=0.67.16
@@ -38,9 +30,56 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
+      - run: terragrunt init -input=false --terragrunt-non-interactive
+      - run: terragrunt destroy -auto-approve -input=false --terragrunt-non-interactive
 
-      - name: Terragrunt run-all init
-        run: terragrunt run-all init -input=false --terragrunt-non-interactive
+  destroy-ec2:
+    name: Destroy ec2
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/dev/us-east-1/ec2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Install Terragrunt
+        run: |
+          TG_VERSION=0.67.16
+          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+      - run: terragrunt init -input=false --terragrunt-non-interactive
+      - run: terragrunt destroy -auto-approve -input=false --terragrunt-non-interactive
 
-      - name: Terragrunt run-all destroy
-        run: terragrunt run-all destroy -auto-approve -input=false --terragrunt-non-interactive
+  destroy-s3:
+    name: Destroy s3
+    needs: [destroy-cloudfront]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live/dev/us-east-1/s3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Install Terragrunt
+        run: |
+          TG_VERSION=0.67.16
+          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+      - run: terragrunt init -input=false --terragrunt-non-interactive
+      - run: terragrunt destroy -auto-approve -input=false --terragrunt-non-interactive
