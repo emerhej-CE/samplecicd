@@ -1,0 +1,10 @@
+# CloudFront stack — uses S3 stack as origin (dependency ../s3).
+# Identity from config/global.yaml; region from region.yaml.
+
+enabled: true
+comment: "QA sample — S3 static origin"
+price_class: PriceClass_100
+default_root_object: index.html
+viewer_protocol_policy: redirect-to-https
+
+tags: {}

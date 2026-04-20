@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - qa
 
 permissions:
   contents: read
@@ -11,19 +12,12 @@ permissions:
 
 jobs:
   apply:
-    name: Apply ${{ matrix.module }}
+    name: Terragrunt run-all apply (us-east-1)
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - s3
-          - ec2
 
     defaults:
       run:
-        working-directory: live/dev/us-east-1/${{ matrix.module }}
+        working-directory: live/dev/us-east-1
 
     steps:
       - name: Checkout repository
@@ -37,17 +31,19 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
       - name: Install Terragrunt
         run: |
           TG_VERSION=0.67.16
-          wget -O terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
 
-      - name: Terragrunt Init
-        run: terragrunt init -input=false --terragrunt-non-interactive
+      - name: Terragrunt run-all init
+        run: terragrunt run-all init -input=false --terragrunt-non-interactive
 
-      - name: Terragrunt Apply
-        run: terragrunt apply -auto-approve -input=false --terragrunt-non-interactive
+      - name: Terragrunt run-all apply
+        run: terragrunt run-all apply -auto-approve -input=false --terragrunt-non-interactive
