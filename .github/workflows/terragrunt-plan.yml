@@ -1,0 +1,61 @@
+name: Terragrunt Plan
+
+on:
+  pull_request:
+    branches:
+      - main
+      - qa
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Plan ${{ matrix.module }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - s3
+          - ec2
+
+    defaults:
+      run:
+        working-directory: live/dev/us-east-1/${{ matrix.module }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Install Terragrunt
+        run: |
+          TG_VERSION=0.67.16
+          wget -O terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Terragrunt Format Check
+        run: terragrunt hclfmt --check
+
+      - name: Terragrunt Init
+        run: terragrunt init -input=false
+
+      - name: Terragrunt Validate
+        run: terragrunt validate
+
+      - name: Terragrunt Plan
+        run: terragrunt plan -input=false -no-color
