@@ -1,3 +1,4 @@
+# Comment-only marker for manual pushes / PR workflow testing (no behavior change).
 name: Terragrunt Plan
 
 on:
