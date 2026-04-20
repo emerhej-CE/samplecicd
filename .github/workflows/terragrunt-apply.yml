@@ -47,7 +47,7 @@ jobs:
           terragrunt --version
 
       - name: Terragrunt Init
-        run: terragrunt init -input=false
+        run: terragrunt init -input=false --terragrunt-non-interactive
 
       - name: Terragrunt Apply
-        run: terragrunt apply -auto-approve -input=false
+        run: terragrunt apply -auto-approve -input=false --terragrunt-non-interactive
