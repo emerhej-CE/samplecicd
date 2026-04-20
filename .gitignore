@@ -1,0 +1,8 @@
+# SSH private key — never commit
+testkey
+
+.terragrunt-cache/
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.*.log
