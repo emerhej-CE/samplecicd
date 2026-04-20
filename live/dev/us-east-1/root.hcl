@@ -1,4 +1,5 @@
 # Regional root — same pattern as portal-mono live/dev/us-east-1/root.hcl
+# noop: trivial change for local commits / CI testing
 locals {
   aws_region = "us-east-1"
   # Optional named profile for local runs only. Leave unset in CI so the AWS provider
