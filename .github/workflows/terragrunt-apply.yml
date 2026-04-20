@@ -11,63 +11,91 @@ permissions:
   id-token: write
 
 jobs:
-  apply-s3:
-    name: Apply s3
+  discover:
+    name: Discover Terragrunt stacks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: live/dev/us-east-1/s3
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-      - name: Install Terragrunt
+      - id: set
+        env:
+          TG_MODE: apply
         run: |
-          TG_VERSION=0.67.16
-          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
-          chmod +x terragrunt
-          sudo mv terragrunt /usr/local/bin/terragrunt
-          terragrunt --version
-      - run: terragrunt init -input=false --terragrunt-non-interactive
-      - run: terragrunt apply -auto-approve -input=false --terragrunt-non-interactive
+          set -euo pipefail
+          JSON=$(python3 <<'PY'
+          import glob
+          import json
+          import os
+          import re
+          import sys
+          from collections import defaultdict, deque
 
-  apply-ec2:
-    name: Apply ec2
+          BASE = os.environ.get("TG_STACKS_DIR", "live/dev/us-east-1")
+          MODE = os.environ.get("TG_MODE", "apply")
+          DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
+
+          def module_names():
+              paths = glob.glob(os.path.join(BASE, "*", "terragrunt.hcl"))
+              return sorted({os.path.basename(os.path.dirname(p)) for p in paths})
+
+          def declared_deps(mod):
+              path = os.path.join(BASE, mod, "terragrunt.hcl")
+              with open(path, encoding="utf-8") as f:
+                  text = f.read()
+              return list(dict.fromkeys(DEP_RE.findall(text)))
+
+          def topo_apply_order(names):
+              name_set = set(names)
+              indeg = {n: 0 for n in names}
+              edges = defaultdict(list)
+              for m in names:
+                  for d in declared_deps(m):
+                      if d not in name_set:
+                          continue
+                      edges[d].append(m)
+                      indeg[m] += 1
+              q = deque(sorted(n for n in names if indeg[n] == 0))
+              out = []
+              while q:
+                  n = q.popleft()
+                  out.append(n)
+                  for w in sorted(edges[n]):
+                      indeg[w] -= 1
+                      if indeg[w] == 0:
+                          q.append(w)
+              if len(out) != len(names):
+                  print("cycle or unresolved deps", file=sys.stderr)
+                  sys.exit(1)
+              return out
+
+          names = module_names()
+          if not names:
+              print(f"error: no */terragrunt.hcl under {BASE}", file=sys.stderr)
+              sys.exit(1)
+          order = topo_apply_order(names)
+          if MODE == "destroy":
+              order = list(reversed(order))
+          print(json.dumps([{"module": m} for m in order]))
+          PY
+          )
+          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$JSON" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "matrix=$JSON"
+
+  apply:
+    name: Apply ${{ matrix.module }}
+    needs: [discover]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: live/dev/us-east-1/ec2
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-      - name: Install Terragrunt
-        run: |
-          TG_VERSION=0.67.16
-          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
-          chmod +x terragrunt
-          sudo mv terragrunt /usr/local/bin/terragrunt
-          terragrunt --version
-      - run: terragrunt init -input=false --terragrunt-non-interactive
-      - run: terragrunt apply -auto-approve -input=false --terragrunt-non-interactive
-
-  apply-cloudfront:
-    name: Apply cloudfront
-    needs: [apply-s3]
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: live/dev/us-east-1/cloudfront
+        working-directory: live/dev/us-east-1/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
