@@ -1,0 +1,6 @@
+# Global identity for Terragrunt stacks under live/dev (portal-mono style).
+global:
+  project: newsample
+  environment: dev
+
+global_tags: {}

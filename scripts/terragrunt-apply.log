@@ -1,0 +1,256 @@
+19:37:07.560 STDOUT [ec2] terraform: data.aws_vpc.default: Reading...
+19:37:07.560 STDOUT [ec2] terraform: data.aws_ssm_parameter.al2023_ami: Reading...
+19:37:07.590 STDOUT [ec2] terraform: data.aws_ssm_parameter.al2023_ami: Read complete after 0s [id=/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64]
+19:37:07.777 STDOUT [s3] terraform: Terraform used the selected providers to generate the following execution
+19:37:07.777 STDOUT [s3] terraform: plan. Resource actions are indicated with the following symbols:
+19:37:07.777 STDOUT [s3] terraform:   + create
+19:37:07.777 STDOUT [s3] terraform: Terraform will perform the following actions:
+19:37:07.777 STDOUT [s3] terraform:   # aws_s3_bucket.this will be created
+19:37:07.777 STDOUT [s3] terraform:   + resource "aws_s3_bucket" "this" {
+19:37:07.777 STDOUT [s3] terraform:       + acceleration_status         = (known after apply)
+19:37:07.777 STDOUT [s3] terraform:       + acl                         = (known after apply)
+19:37:07.777 STDOUT [s3] terraform:       + arn                         = (known after apply)
+19:37:07.777 STDOUT [s3] terraform:       + bucket                      = (known after apply)
+19:37:07.777 STDOUT [s3] terraform:       + bucket_domain_name          = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + bucket_namespace            = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + bucket_prefix               = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + bucket_region               = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + bucket_regional_domain_name = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + force_destroy               = true
+19:37:07.778 STDOUT [s3] terraform:       + hosted_zone_id              = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + id                          = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + object_lock_enabled         = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + policy                      = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + region                      = "us-east-1"
+19:37:07.778 STDOUT [s3] terraform:       + request_payer               = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + tags                        = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + tags_all                    = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + website_domain              = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + website_endpoint            = (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + cors_rule (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + grant (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + lifecycle_rule (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + logging (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + object_lock_configuration (known after apply)
+19:37:07.778 STDOUT [s3] terraform:       + replication_configuration (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + server_side_encryption_configuration (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + versioning (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + website (known after apply)
+19:37:07.779 STDOUT [s3] terraform:     }
+19:37:07.779 STDOUT [s3] terraform:   # aws_s3_bucket_public_access_block.this will be created
+19:37:07.779 STDOUT [s3] terraform:   + resource "aws_s3_bucket_public_access_block" "this" {
+19:37:07.779 STDOUT [s3] terraform:       + block_public_acls       = true
+19:37:07.779 STDOUT [s3] terraform:       + block_public_policy     = true
+19:37:07.779 STDOUT [s3] terraform:       + bucket                  = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + id                      = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + ignore_public_acls      = true
+19:37:07.779 STDOUT [s3] terraform:       + region                  = "us-east-1"
+19:37:07.779 STDOUT [s3] terraform:       + restrict_public_buckets = true
+19:37:07.779 STDOUT [s3] terraform:     }
+19:37:07.779 STDOUT [s3] terraform:   # aws_s3_bucket_server_side_encryption_configuration.this will be created
+19:37:07.779 STDOUT [s3] terraform:   + resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
+19:37:07.779 STDOUT [s3] terraform:       + bucket = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + id     = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:       + region = "us-east-1"
+19:37:07.779 STDOUT [s3] terraform:       + rule {
+19:37:07.779 STDOUT [s3] terraform:           + blocked_encryption_types = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:           + bucket_key_enabled       = (known after apply)
+19:37:07.779 STDOUT [s3] terraform:           + apply_server_side_encryption_by_default {
+19:37:07.779 STDOUT [s3] terraform:               + kms_master_key_id = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:               + sse_algorithm     = "AES256"
+19:37:07.780 STDOUT [s3] terraform:             }
+19:37:07.780 STDOUT [s3] terraform:         }
+19:37:07.780 STDOUT [s3] terraform:     }
+19:37:07.780 STDOUT [s3] terraform:   # aws_s3_bucket_versioning.this will be created
+19:37:07.780 STDOUT [s3] terraform:   + resource "aws_s3_bucket_versioning" "this" {
+19:37:07.780 STDOUT [s3] terraform:       + bucket = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + id     = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + region = "us-east-1"
+19:37:07.780 STDOUT [s3] terraform:       + versioning_configuration {
+19:37:07.780 STDOUT [s3] terraform:           + mfa_delete = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:           + status     = "Enabled"
+19:37:07.780 STDOUT [s3] terraform:         }
+19:37:07.780 STDOUT [s3] terraform:     }
+19:37:07.780 STDOUT [s3] terraform:   # random_id.bucket will be created
+19:37:07.780 STDOUT [s3] terraform:   + resource "random_id" "bucket" {
+19:37:07.780 STDOUT [s3] terraform:       + b64_std     = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + b64_url     = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + byte_length = 2
+19:37:07.780 STDOUT [s3] terraform:       + dec         = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + hex         = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:       + id          = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:     }
+19:37:07.780 STDOUT [s3] terraform: Plan: 5 to add, 0 to change, 0 to destroy.
+19:37:07.780 STDOUT [s3] terraform: Changes to Outputs:
+19:37:07.780 STDOUT [s3] terraform:   + bucket_arn = (known after apply)
+19:37:07.780 STDOUT [s3] terraform:   + bucket_id  = (known after apply)
+19:37:07.885 STDOUT [ec2] terraform: data.aws_vpc.default: Read complete after 0s [id=vpc-079ecd489134ec042]
+19:37:07.896 STDOUT [ec2] terraform: data.aws_subnets.default: Reading...
+19:37:07.961 STDOUT [ec2] terraform: data.aws_subnets.default: Read complete after 0s [id=us-east-1]
+19:37:08.269 STDOUT [s3] terraform: random_id.bucket: Creating...
+19:37:08.271 STDOUT [s3] terraform: random_id.bucket: Creation complete after 0s [id=wmc]
+19:37:08.319 STDOUT [ec2] terraform: Terraform used the selected providers to generate the following execution
+19:37:08.319 STDOUT [ec2] terraform: plan. Resource actions are indicated with the following symbols:
+19:37:08.321 STDOUT [ec2] terraform:   + create
+19:37:08.321 STDOUT [ec2] terraform: Terraform will perform the following actions:
+19:37:08.321 STDOUT [ec2] terraform:   # aws_instance.this will be created
+19:37:08.322 STDOUT [ec2] terraform:   + resource "aws_instance" "this" {
+19:37:08.322 STDOUT [ec2] terraform:       + ami                                  = "ami-098e39bafa7e7303d"
+19:37:08.322 STDOUT [ec2] terraform:       + arn                                  = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + associate_public_ip_address          = true
+19:37:08.322 STDOUT [ec2] terraform:       + availability_zone                    = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + disable_api_stop                     = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + disable_api_termination              = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + ebs_optimized                        = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + enable_primary_ipv6                  = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + force_destroy                        = false
+19:37:08.322 STDOUT [ec2] terraform:       + get_password_data                    = false
+19:37:08.322 STDOUT [ec2] terraform:       + host_id                              = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + host_resource_group_arn              = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + iam_instance_profile                 = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + id                                   = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + instance_initiated_shutdown_behavior = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + instance_lifecycle                   = (known after apply)
+19:37:08.322 STDOUT [ec2] terraform:       + instance_state                       = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + instance_type                        = "t3.small"
+19:37:08.323 STDOUT [ec2] terraform:       + ipv6_address_count                   = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + ipv6_addresses                       = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + key_name                             = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + monitoring                           = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + outpost_arn                          = (known after apply)
+19:37:08.323 STDOUT [ec2] terraform:       + password_data                        = (known after apply)
+19:37:08.337 STDOUT [ec2] terraform:       + placement_group                      = (known after apply)
+19:37:08.337 STDOUT [ec2] terraform:       + placement_group_id                   = (known after apply)
+19:37:08.337 STDOUT [ec2] terraform:       + placement_partition_number           = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + primary_network_interface_id         = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + private_dns                          = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + private_ip                           = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + public_dns                           = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + public_ip                            = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + region                               = "us-east-1"
+19:37:08.338 STDOUT [ec2] terraform:       + secondary_private_ips                = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + security_groups                      = (known after apply)
+19:37:08.338 STDOUT [ec2] terraform:       + source_dest_check                    = true
+19:37:08.338 STDOUT [ec2] terraform:       + spot_instance_request_id             = (known after apply)
+19:37:08.339 STDOUT [ec2] terraform:       + subnet_id                            = "subnet-04d4ddb1a3be1dab3"
+19:37:08.339 STDOUT [ec2] terraform:       + tags                                 = {
+19:37:08.339 STDOUT [ec2] terraform:           + "Component"   = "ec2"
+19:37:08.339 STDOUT [ec2] terraform:           + "Name"        = "newsample-dev-ec2"
+19:37:08.339 STDOUT [ec2] terraform:           + "Region"      = "us-east-1"
+19:37:08.340 STDOUT [ec2] terraform:           + "environment" = "dev"
+19:37:08.340 STDOUT [ec2] terraform:           + "project"     = "newsample"
+19:37:08.341 STDOUT [ec2] terraform:         }
+19:37:08.341 STDOUT [ec2] terraform:       + tags_all                             = {
+19:37:08.341 STDOUT [ec2] terraform:           + "Component"   = "ec2"
+19:37:08.341 STDOUT [ec2] terraform:           + "Name"        = "newsample-dev-ec2"
+19:37:08.341 STDOUT [ec2] terraform:           + "Region"      = "us-east-1"
+19:37:08.341 STDOUT [ec2] terraform:           + "environment" = "dev"
+19:37:08.341 STDOUT [ec2] terraform:           + "project"     = "newsample"
+19:37:08.341 STDOUT [ec2] terraform:         }
+19:37:08.342 STDOUT [ec2] terraform:       + tenancy                              = (known after apply)
+19:37:08.342 STDOUT [ec2] terraform:       + user_data_base64                     = (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + user_data_replace_on_change          = false
+19:37:08.343 STDOUT [ec2] terraform:       + vpc_security_group_ids               = (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + capacity_reservation_specification (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + cpu_options (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + ebs_block_device (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + enclave_options (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + ephemeral_block_device (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + instance_market_options (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + maintenance_options (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + metadata_options {
+19:37:08.343 STDOUT [ec2] terraform:           + http_endpoint               = "enabled"
+19:37:08.343 STDOUT [ec2] terraform:           + http_protocol_ipv6          = "disabled"
+19:37:08.343 STDOUT [ec2] terraform:           + http_put_response_hop_limit = 1
+19:37:08.343 STDOUT [ec2] terraform:           + http_tokens                 = "required"
+19:37:08.343 STDOUT [ec2] terraform:           + instance_metadata_tags      = (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:         }
+19:37:08.343 STDOUT [ec2] terraform:       + network_interface (known after apply)
+19:37:08.343 STDOUT [ec2] terraform:       + primary_network_interface (known after apply)
+19:37:08.344 STDOUT [ec2] terraform:       + private_dns_name_options (known after apply)
+19:37:08.344 STDOUT [ec2] terraform:       + root_block_device (known after apply)
+19:37:08.344 STDOUT [ec2] terraform:       + secondary_network_interface (known after apply)
+19:37:08.344 STDOUT [ec2] terraform:     }
+19:37:08.344 STDOUT [ec2] terraform:   # aws_security_group.ec2 will be created
+19:37:08.344 STDOUT [ec2] terraform:   + resource "aws_security_group" "ec2" {
+19:37:08.344 STDOUT [ec2] terraform:       + arn                    = (known after apply)
+19:37:08.344 STDOUT [ec2] terraform:       + description            = "EC2 egress-only"
+19:37:08.344 STDOUT [ec2] terraform:       + egress                 = [
+19:37:08.344 STDOUT [ec2] terraform:           + {
+19:37:08.344 STDOUT [ec2] terraform:               + cidr_blocks      = [
+19:37:08.344 STDOUT [ec2] terraform:                   + "0.0.0.0/0",
+19:37:08.344 STDOUT [ec2] terraform:                 ]
+19:37:08.344 STDOUT [ec2] terraform:               + from_port        = 0
+19:37:08.344 STDOUT [ec2] terraform:               + ipv6_cidr_blocks = []
+19:37:08.344 STDOUT [ec2] terraform:               + prefix_list_ids  = []
+19:37:08.344 STDOUT [ec2] terraform:               + protocol         = "-1"
+19:37:08.345 STDOUT [ec2] terraform:               + security_groups  = []
+19:37:08.345 STDOUT [ec2] terraform:               + self             = false
+19:37:08.345 STDOUT [ec2] terraform:               + to_port          = 0
+19:37:08.345 STDOUT [ec2] terraform:                 # (1 unchanged attribute hidden)
+19:37:08.345 STDOUT [ec2] terraform:             },
+19:37:08.345 STDOUT [ec2] terraform:         ]
+19:37:08.345 STDOUT [ec2] terraform:       + id                     = (known after apply)
+19:37:08.345 STDOUT [ec2] terraform:       + ingress                = (known after apply)
+19:37:08.345 STDOUT [ec2] terraform:       + name                   = (known after apply)
+19:37:08.346 STDOUT [ec2] terraform:       + name_prefix            = "newsample-dev-ec2-"
+19:37:08.346 STDOUT [ec2] terraform:       + owner_id               = (known after apply)
+19:37:08.346 STDOUT [ec2] terraform:       + region                 = "us-east-1"
+19:37:08.346 STDOUT [ec2] terraform:       + revoke_rules_on_delete = false
+19:37:08.346 STDOUT [ec2] terraform:       + tags                   = {
+19:37:08.346 STDOUT [ec2] terraform:           + "Component"   = "ec2"
+19:37:08.346 STDOUT [ec2] terraform:           + "Name"        = "newsample-dev-ec2-sg"
+19:37:08.346 STDOUT [ec2] terraform:           + "Region"      = "us-east-1"
+19:37:08.346 STDOUT [ec2] terraform:           + "environment" = "dev"
+19:37:08.346 STDOUT [ec2] terraform:           + "project"     = "newsample"
+19:37:08.346 STDOUT [ec2] terraform:         }
+19:37:08.346 STDOUT [ec2] terraform:       + tags_all               = {
+19:37:08.346 STDOUT [ec2] terraform:           + "Component"   = "ec2"
+19:37:08.346 STDOUT [ec2] terraform:           + "Name"        = "newsample-dev-ec2-sg"
+19:37:08.346 STDOUT [ec2] terraform:           + "Region"      = "us-east-1"
+19:37:08.346 STDOUT [ec2] terraform:           + "environment" = "dev"
+19:37:08.348 STDOUT [ec2] terraform:           + "project"     = "newsample"
+19:37:08.348 STDOUT [ec2] terraform:         }
+19:37:08.348 STDOUT [ec2] terraform:       + vpc_id                 = "vpc-079ecd489134ec042"
+19:37:08.348 STDOUT [ec2] terraform:     }
+19:37:08.348 STDOUT [ec2] terraform: Plan: 2 to add, 0 to change, 0 to destroy.
+19:37:08.348 STDOUT [ec2] terraform: Changes to Outputs:
+19:37:08.348 STDOUT [ec2] terraform:   + instance_id = (known after apply)
+19:37:08.348 STDOUT [ec2] terraform:   + public_ip   = (known after apply)
+19:37:08.493 STDOUT [s3] terraform: aws_s3_bucket.this: Creating...
+19:37:08.905 STDOUT [ec2] terraform: aws_security_group.ec2: Creating...
+19:37:08.972 STDOUT [s3] terraform: aws_s3_bucket.this: Creation complete after 1s [id=newsample-dev-app-data-c267]
+19:37:08.977 STDOUT [s3] terraform: aws_s3_bucket_server_side_encryption_configuration.this: Creating...
+19:37:08.977 STDOUT [s3] terraform: aws_s3_bucket_versioning.this: Creating...
+19:37:08.977 STDOUT [s3] terraform: aws_s3_bucket_public_access_block.this: Creating...
+19:37:09.313 STDOUT [s3] terraform: aws_s3_bucket_server_side_encryption_configuration.this: Creation complete after 0s [id=newsample-dev-app-data-c267]
+19:37:09.574 STDOUT [s3] terraform: aws_s3_bucket_public_access_block.this: Creation complete after 1s [id=newsample-dev-app-data-c267]
+19:37:10.320 STDOUT [s3] terraform: aws_s3_bucket_versioning.this: Creation complete after 1s [id=newsample-dev-app-data-c267]
+19:37:10.439 STDOUT [s3] terraform: Apply complete! Resources: 5 added, 0 changed, 0 destroyed.
+19:37:10.439 STDOUT [s3] terraform: Outputs:
+19:37:10.439 STDOUT [s3] terraform: bucket_arn = "arn:aws:s3:::newsample-dev-app-data-c267"
+19:37:10.439 STDOUT [s3] terraform: bucket_id = "newsample-dev-app-data-c267"
+19:37:11.147 STDOUT [ec2] terraform: aws_security_group.ec2: Creation complete after 2s [id=sg-00a6596f3b013849e]
+19:37:11.156 STDOUT [ec2] terraform: aws_instance.this: Creating...
+19:37:21.157 STDOUT [ec2] terraform: aws_instance.this: Still creating... [00m10s elapsed]
+19:37:24.074 STDOUT [ec2] terraform: aws_instance.this: Creation complete after 13s [id=i-0de14846ad02742a3]
+19:37:24.187 STDOUT [ec2] terraform: Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+19:37:24.187 STDOUT [ec2] terraform: Outputs:
+19:37:24.187 STDOUT [ec2] terraform: instance_id = "i-0de14846ad02742a3"
+19:37:24.187 STDOUT [ec2] terraform: public_ip = "98.86.112.30"
+
+❯❯ Run Summary  2 units  23s
+   ────────────────────────────
+   Succeeded    2
+
+
+--- STDERR ---
+19:37:00.539 WARN   The `--queue-exclude-external` flag is deprecated and will be removed in a future version of Terragrunt. External dependencies are now excluded by default.
+19:37:00.565 INFO   Terragrunt Cache server is listening on 127.0.0.1:38913
+19:37:00.566 INFO   Start Terragrunt Cache server
+19:37:00.569 INFO   Unit queue will be processed for apply in this order:
+- Unit ec2
+- Unit s3
+
+19:37:24.196 INFO   Shutting down Terragrunt Cache server...
+19:37:24.197 INFO   Terragrunt Cache server stopped

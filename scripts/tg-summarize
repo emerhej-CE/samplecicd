@@ -1,0 +1,846 @@
+#!/usr/bin/env python3
+"""
+Terragrunt Plan/Apply Analyzer
+Handles both successful plans (JSON) and failed plans (log files)
+"""
+
+import json
+import os
+import sys
+import glob
+import re
+import subprocess
+import shutil
+import time
+import threading
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+
+class TerragruntAnalyzer:
+    def __init__(self, operation: str = "plan", base_dir: str = ".", detailed: bool = False, auto_approve: bool = False):
+        self.operation = operation
+        self.base_dir = base_dir
+        self.detailed = detailed
+        self.auto_approve = auto_approve
+        self.json_dir = os.path.join(base_dir, "json-out")
+        # Create log file in the same directory as the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.log_file = os.path.join(script_dir, f"terragrunt-{operation}.log")
+        self._stop_progress = False
+        
+    def analyze(self):
+        """Main analysis function"""
+        print("=" * 80)
+        print(f"🔍 Terragrunt {self.operation.upper()} Analysis - {self.base_dir}")
+        print("=" * 80)
+        
+        # Clean up old log files at the start
+        if os.path.exists(self.log_file):
+            print(f"   🧹 Removing old log file: {self.log_file}")
+            os.remove(self.log_file)
+        
+        # Handle approval for apply operations
+        if self.operation == "apply":
+            if "prod" in self.base_dir:
+                if self.auto_approve:
+                    print("\n⚠️  WARNING: This will modify PRODUCTION infrastructure with AUTO-APPROVE!")
+                else:
+                    print("\n⚠️  WARNING: This will modify PRODUCTION infrastructure!")
+                    print("You should run 'make plan prod' first to review changes before applying.")
+            elif not self.auto_approve:
+                print(f"\n⚠️  WARNING: This will modify the {self.base_dir} environment!")
+                print("You should run 'make plan dev' first to review changes before applying.")
+        
+        # First, run terragrunt command
+        print(f"\n🚀 Running terragrunt {self.operation}...")
+        self._run_terragrunt()
+        
+        # Then analyze the results from logs
+        print(f"\n📊 Analyzing results from logs...")
+        
+        # Check if we have log files
+        log_exists = os.path.exists(self.log_file)
+        
+        if log_exists:
+            self._analyze_terragrunt_logs()
+        else:
+            print("⚠️  No log file found")
+            return
+            
+        # Clean up json-out directory at the end
+        if os.path.exists(self.json_dir):
+            print(f"\n🧹 Cleaning up json-out directory...")
+            shutil.rmtree(self.json_dir)
+            
+        print("\n" + "=" * 80)
+        
+    def _fix_terraform_provider_permissions(self):
+        """S3/cp restores often strip +x; Terraform then fails with fork/exec permission denied."""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = os.path.dirname(script_dir)
+        print(f"   🔧 Ensuring Terraform provider binaries are executable under {repo_root} ...")
+        try:
+            subprocess.run(
+                [
+                    "find",
+                    repo_root,
+                    "-name",
+                    "terraform-provider-*",
+                    "-type",
+                    "f",
+                    "-exec",
+                    "chmod",
+                    "+x",
+                    "{}",
+                    "+",
+                ],
+                capture_output=True,
+                timeout=300,
+                check=False,
+            )
+        except Exception as e:
+            print(f"   ⚠️  Provider chmod skipped: {e}")
+
+    def _run_terragrunt(self):
+        """Run terragrunt command and capture output"""
+        if self.operation in ("apply", "plan"):
+            self._fix_terraform_provider_permissions()
+        # Change to the target directory
+        original_dir = os.getcwd()
+        try:
+            os.chdir(self.base_dir)
+            
+            # Clean up old json-out directory
+            if os.path.exists("json-out"):
+                print("   🧹 Cleaning up old json-out directory...")
+                shutil.rmtree("json-out")
+            
+            # For apply operations, handle approval process
+            if self.operation == "apply" and not self.auto_approve:
+                # Ask for initial confirmation
+                print(f"\n⚠️  This will apply changes to {self.base_dir}")
+                try:
+                    while True:
+                        confirm = input("Are you sure you want to proceed? Type 'yes' to continue: ").strip().lower()
+                        if confirm == 'yes':
+                            break
+                        elif confirm in ['no', 'n', '']:
+                            print("   ❌ Apply cancelled by user")
+                            return
+                        else:
+                            print("   Please type 'yes' to continue or 'no' to cancel")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n   ❌ Apply cancelled (no input available)")
+                    return
+                
+                print("\n🚀 Proceeding with apply...")
+                
+                # Run the apply command directly with --non-interactive
+                apply_cmd = [
+                    "terragrunt", "run", "apply", "--all", 
+                    "--no-color", "--queue-exclude-external", "--non-interactive",
+                    "--provider-cache",
+                    "--provider-cache-dir", ".terraform/plugins"
+                ]
+                
+                print(f"   Executing: {' '.join(apply_cmd)}")
+                
+                # Start progress indicator for apply
+                progress_thread = threading.Thread(target=self._show_progress)
+                progress_thread.daemon = True
+                progress_thread.start()
+                
+                result = subprocess.run(
+                    apply_cmd, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=14400
+                )
+                
+                # Stop progress indicator
+                self._stop_progress = True
+                progress_thread.join()
+                
+                # Write output to log file, filtering out "Refreshing state" lines
+                with open(self.log_file, "w") as f:
+                    # Filter stdout to exclude "Refreshing state" lines
+                    filtered_stdout = self._filter_refreshing_state_lines(result.stdout)
+                    f.write(filtered_stdout)
+                    if result.stderr:
+                        f.write("\n--- STDERR ---\n")
+                        # Also filter stderr
+                        filtered_stderr = self._filter_refreshing_state_lines(result.stderr)
+                        f.write(filtered_stderr)
+                
+                # Check if command was successful
+                if result.returncode == 0:
+                    print(f"   ✅ Terragrunt apply completed successfully")
+                else:
+                    print(f"   ❌ Terragrunt apply failed with exit code {result.returncode}")
+                
+                return  # Exit early for manual apply
+            
+            # Build terragrunt command for auto-approve or non-apply operations
+            cmd = [
+                "terragrunt", "run", self.operation, "--all", 
+                "--no-color", "--queue-exclude-external",
+                "--provider-cache",
+                "--provider-cache-dir", ".terraform/plugins"
+            ]
+            
+            # Add --non-interactive for apply operations if auto-approve is requested
+            if self.operation == "apply" and self.auto_approve:
+                cmd.append("--non-interactive")
+            
+            # Run command and capture output
+            print(f"   Executing: {' '.join(cmd)}")
+            
+            # Start progress indicator
+            progress_thread = threading.Thread(target=self._show_progress)
+            progress_thread.daemon = True
+            progress_thread.start()
+            
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=14400
+            )
+            
+            # Stop progress indicator
+            self._stop_progress = True
+            progress_thread.join()
+            
+            # Write output to log file, filtering out "Refreshing state" lines
+            with open(self.log_file, "w") as f:
+                # Filter stdout to exclude "Refreshing state" lines
+                filtered_stdout = self._filter_refreshing_state_lines(result.stdout)
+                f.write(filtered_stdout)
+                if result.stderr:
+                    f.write("\n--- STDERR ---\n")
+                    # Also filter stderr
+                    filtered_stderr = self._filter_refreshing_state_lines(result.stderr)
+                    f.write(filtered_stderr)
+            
+            # Check if command was successful
+            if result.returncode == 0:
+                print(f"   ✅ Terragrunt {self.operation} completed successfully")
+            else:
+                print(f"   ❌ Terragrunt {self.operation} failed with exit code {result.returncode}")
+                
+        except subprocess.TimeoutExpired:
+            print(f"   ⏰ Terragrunt {self.operation} timed out after 1 hour")
+        except Exception as e:
+            print(f"   ❌ Error running terragrunt: {e}")
+        finally:
+            os.chdir(original_dir)
+    
+    def _show_progress(self):
+        """Show animated progress indicator"""
+        progress_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        i = 0
+        while not self._stop_progress:
+            print(f"\r   {progress_chars[i % len(progress_chars)]} Running terragrunt {self.operation}...", end="", flush=True)
+            time.sleep(0.1)
+            i += 1
+        print()  # New line after progress stops
+    
+    def _filter_refreshing_state_lines(self, text: str) -> str:
+        """Filter out lines containing 'Refreshing state' from the text"""
+        lines = text.split('\n')
+        filtered_lines = [line for line in lines if 'Refreshing state' not in line]
+        return '\n'.join(filtered_lines)
+        
+    def _analyze_terragrunt_logs(self):
+        """Analyze terragrunt logs for both plan and apply operations"""
+        print(f"\n📄 Analyzing log: {self.log_file}")
+        
+        try:
+            with open(self.log_file, 'r') as f:
+                log_content = f.read()
+            
+            # Extract all modules from the log
+            modules = self._extract_all_modules_from_log(log_content)
+            
+            if self.operation == "apply":
+                self._analyze_apply_from_log(log_content, modules)
+            else:
+                self._analyze_plan_from_log(log_content, modules)
+                
+        except Exception as e:
+            print(f"❌ Error reading log file: {e}")
+    
+    def analyze_log_only(self, log_file_path=None):
+        """Analyze existing log file without running terragrunt"""
+        print("=" * 80)
+        print(f"🔍 Terragrunt {self.operation.upper()} Analysis - {self.base_dir} (LOG ONLY)")
+        print("=" * 80)
+        
+        # Use provided log file or default
+        target_log_file = log_file_path if log_file_path else self.log_file
+        
+        print(f"\n📄 Reading existing log: {target_log_file}")
+        
+        if not os.path.exists(target_log_file):
+            print(f"❌ Log file not found: {target_log_file}")
+            return
+        
+        try:
+            with open(target_log_file, 'r') as f:
+                log_content = f.read()
+            
+            modules = self._extract_all_modules_from_log(log_content)
+            print(f"📊 Found {len(modules)} modules in log")
+            
+            if self.operation == "apply":
+                self._analyze_apply_from_log(log_content, modules)
+            else:
+                self._analyze_plan_from_log(log_content, modules)
+                
+        except Exception as e:
+            print(f"❌ Error reading log file: {e}")
+    
+    def _extract_all_modules_from_log(self, log_content: str) -> List[str]:
+        """Extract all unique Terragrunt module names from the log"""
+        modules = set()
+        
+        # Pattern to match Terragrunt module names in brackets followed by terraform:
+        # Format: [module_name] terraform: ...
+        pattern = r'\[([^\]]+)\]\s+terraform:'
+        matches = re.findall(pattern, log_content)
+        
+        for match in matches:
+            module = match.strip()
+            # Filter out malformed entries (those with timestamps or other junk)
+            if (module and len(module) > 1 and 
+                not re.match(r'^\d+:\d+:\d+', module) and  # No timestamps
+                not 'STDOUT' in module and  # No STDOUT/STDERR
+                not 'STDERR' in module and
+                not module.startswith('level') and  # No log levels
+                '/' in module or module in ['iam', 'redis', 'ssl_policy', 'cloud_armor', 'dns_zone', 'firewall']):  # Valid module patterns
+                modules.add(module)
+        
+        return sorted(list(modules))
+    
+    def _analyze_plan_from_log(self, log_content: str, modules: List[str]):
+        """Analyze plan results from log"""
+        modules_with_changes = []
+        modules_no_changes = []
+        
+        for module in modules:
+            # Find all occurrences of this module in the log
+            module_lines = []
+            for line in log_content.split('\n'):
+                if f'[{module}]' in line:
+                    module_lines.append(line)
+            
+            # Check if this module has a plan output
+            has_plan = False
+            plan_values = None
+            
+            for line in module_lines:
+                if 'Plan:' in line and 'to add' in line and 'to change' in line and 'to destroy' in line:
+                    # Extract plan values
+                    plan_match = re.search(r'Plan: (\d+) to add, (\d+) to change, (\d+) to destroy\.', line)
+                    if plan_match:
+                        has_plan = True
+                        plan_values = plan_match.groups()
+                        break
+            
+            if has_plan and plan_values:
+                add, change, destroy = map(int, plan_values)
+                if add > 0 or change > 0 or destroy > 0:
+                    modules_with_changes.append((module, {'create': add, 'update': change, 'delete': destroy}))
+                else:
+                    modules_no_changes.append(module)
+            else:
+                # Check for "No changes" message for this module
+                has_no_changes = False
+                for line in module_lines:
+                    if 'No changes. Your infrastructure matches the configuration.' in line:
+                        has_no_changes = True
+                        break
+                
+                if has_no_changes:
+                    modules_no_changes.append(module)
+                else:
+                    # Default to no changes if no plan info found
+                    modules_no_changes.append(module)
+        
+        # Display results
+        if modules_with_changes:
+            print(f"\n🔵 MODULES WITH CHANGES ({len(modules_with_changes)}):")
+            for module_name, changes in modules_with_changes:
+                print(f"   🔵 [{module_name}] - {changes['create']} to add, {changes['update']} to change, {changes['delete']} to destroy")
+                
+                # Show detailed changes if requested
+                if self.detailed:
+                    self._show_plan_changes_from_log(log_content, module_name)
+        
+        if modules_no_changes:
+            print(f"\n✅ MODULES WITH NO CHANGES ({len(modules_no_changes)}):")
+            for module_name in modules_no_changes:
+                print(f"   ✅ [{module_name}] - No changes")
+        
+        # Check for errors in the log
+        state_lock_errors = self._check_state_lock_errors(log_content)
+        other_errors = self._check_other_errors(log_content)
+        
+        # Calculate total resource counts
+        total_create = sum(changes['create'] for _, changes in modules_with_changes)
+        total_update = sum(changes['update'] for _, changes in modules_with_changes)
+        total_delete = sum(changes['delete'] for _, changes in modules_with_changes)
+        
+        print(f"\n📊 SUMMARY:")
+        print(f"   Total modules: {len(modules)}")
+        print(f"   Modules with changes: {len(modules_with_changes)}")
+        print(f"   Modules with no changes: {len(modules_no_changes)}")
+        
+        if modules_with_changes:
+            print(f"\n📊 RESOURCE CHANGES:")
+            print(f"   \033[92m[+]\033[0m Resources to create: {total_create}")
+            print(f"   \033[94m[~]\033[0m Resources to update: {total_update}")
+            print(f"   \033[91m[-]\033[0m Resources to delete: {total_delete}")
+            print(f"   Total resource changes: {total_create + total_update + total_delete}")
+        
+        # Show errors if there are any
+        if state_lock_errors or other_errors:
+            # Remove duplicates - prioritize state lock errors over other errors
+            unique_other_errors = {k: v for k, v in other_errors.items() if k not in state_lock_errors}
+            
+            if state_lock_errors:
+                print(f"\n🔒 STATE LOCK ERRORS:")
+                for module, error in state_lock_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+            
+            if unique_other_errors:
+                print(f"\n❌ OTHER ERRORS:")
+                for module, error in unique_other_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+    
+    def _analyze_apply_from_log(self, log_content: str, modules: List[str]):
+        """Analyze apply results from log - consistent with plan format"""
+        modules_with_changes = []
+        modules_no_changes = []
+        modules_with_errors = []
+        
+        # Get error information first
+        state_lock_errors = self._check_state_lock_errors(log_content)
+        other_errors = self._check_other_errors(log_content)
+        all_error_modules = set(state_lock_errors.keys()) | set(other_errors.keys())
+        
+        # Analyze each module for apply results
+        for module in modules:
+            # Skip modules that have errors - they will be shown in error section
+            if module in all_error_modules:
+                modules_with_errors.append(module)
+                continue
+                
+            module_lines = []
+            for line in log_content.split('\n'):
+                if f'[{module}]' in line:
+                    module_lines.append(line)
+            
+            # Check if this module has apply results
+            has_apply = False
+            apply_values = None
+            
+            for line in module_lines:
+                if 'Apply complete!' in line and 'Resources:' in line:
+                    # Extract apply values
+                    apply_match = re.search(r'Apply complete! Resources: (\d+) added, (\d+) changed, (\d+) destroyed\.', line)
+                    if apply_match:
+                        has_apply = True
+                        apply_values = apply_match.groups()
+                        break
+            
+            if has_apply and apply_values:
+                add, change, destroy = map(int, apply_values)
+                if add > 0 or change > 0 or destroy > 0:
+                    modules_with_changes.append((module, {'create': add, 'update': change, 'delete': destroy}))
+                else:
+                    modules_no_changes.append(module)
+            else:
+                # Check for "No changes" message for this module
+                has_no_changes = False
+                for line in module_lines:
+                    if 'No changes. Your infrastructure matches the configuration.' in line:
+                        has_no_changes = True
+                        break
+                
+                if has_no_changes:
+                    modules_no_changes.append(module)
+                else:
+                    # Default to no changes if no apply info found
+                    modules_no_changes.append(module)
+        
+        # Display results - same format as plan
+        if modules_with_changes:
+            print(f"\n🔵 MODULES WITH CHANGES ({len(modules_with_changes)}):")
+            for module_name, changes in modules_with_changes:
+                print(f"   🔵 [{module_name}] - {changes['create']} added, {changes['update']} changed, {changes['delete']} destroyed")
+                
+                # Show detailed changes if requested
+                if self.detailed:
+                    self._show_apply_changes_from_log(log_content, module_name)
+        
+        if modules_no_changes:
+            print(f"\n✅ MODULES WITH NO CHANGES ({len(modules_no_changes)}):")
+            for module_name in modules_no_changes:
+                print(f"   ✅ [{module_name}] - No changes")
+        
+        # Calculate total resource counts
+        total_create = sum(changes['create'] for _, changes in modules_with_changes)
+        total_update = sum(changes['update'] for _, changes in modules_with_changes)
+        total_delete = sum(changes['delete'] for _, changes in modules_with_changes)
+        
+        print(f"\n📊 SUMMARY:")
+        print(f"   Total modules: {len(modules)}")
+        print(f"   Modules with changes: {len(modules_with_changes)}")
+        print(f"   Modules with no changes: {len(modules_no_changes)}")
+        if modules_with_errors:
+            print(f"   Modules with errors: {len(modules_with_errors)}")
+        
+        if modules_with_changes:
+            print(f"\n📊 RESOURCE CHANGES:")
+            print(f"   \033[92m[+]\033[0m Resources created: {total_create}")
+            print(f"   \033[94m[~]\033[0m Resources updated: {total_update}")
+            print(f"   \033[91m[-]\033[0m Resources destroyed: {total_delete}")
+            print(f"   Total resource changes: {total_create + total_update + total_delete}")
+        
+        # Show errors if there are any
+        if state_lock_errors or other_errors:
+            # Remove duplicates - prioritize state lock errors over other errors
+            unique_other_errors = {k: v for k, v in other_errors.items() if k not in state_lock_errors}
+            
+            if state_lock_errors:
+                print(f"\n🔒 STATE LOCK ERRORS:")
+                for module, error in state_lock_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+            
+            if unique_other_errors:
+                print(f"\n❌ OTHER ERRORS:")
+                for module, error in unique_other_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+    
+    def _show_plan_changes_from_log(self, log_content: str, module_name: str):
+        """Show plan changes for a specific module from log"""
+        # Find all lines for this module
+        module_lines = []
+        for line in log_content.split('\n'):
+            if f'[{module_name}]' in line:
+                module_lines.append(line)
+        
+        # Extract resource changes from module lines
+        create_resources = []
+        update_resources = []
+        delete_resources = []
+        
+        # Look for resource change patterns in module lines
+        for line in module_lines:
+            # Check for create
+            create_match = re.search(r'# (\w+\.\w+(?:\[[^\]]+\])?) will be created', line)
+            if create_match:
+                create_resources.append(create_match.group(1))
+            
+            # Check for update
+            update_match = re.search(r'# (\w+\.\w+(?:\[[^\]]+\])?) will be updated', line)
+            if update_match:
+                update_resources.append(update_match.group(1))
+            
+            # Check for destroy
+            destroy_match = re.search(r'# (\w+\.\w+(?:\[[^\]]+\])?) will be destroyed', line)
+            if destroy_match:
+                delete_resources.append(destroy_match.group(1))
+        
+        # Display changes
+        if create_resources:
+            print(f"      CREATE:")
+            for resource in set(create_resources):
+                print(f"         \033[92m[+]\033[0m {resource}")
+                
+        if update_resources:
+            print(f"      UPDATE:")
+            for resource in set(update_resources):
+                print(f"         \033[94m[~]\033[0m {resource}")
+                
+        if delete_resources:
+            print(f"      DELETE:")
+            for resource in set(delete_resources):
+                print(f"         \033[91m[-]\033[0m {resource}")
+    
+    def _show_apply_changes_from_log(self, log_content: str, module_name: str):
+        """Show apply changes from log for a specific module"""
+        # Find all lines for this module
+        module_lines = []
+        for line in log_content.split('\n'):
+            if f'[{module_name}]' in line:
+                module_lines.append(line)
+        
+        created_resources = []
+        updated_resources = []
+        destroyed_resources = []
+        
+        for line in module_lines:
+            if 'Creating...' in line or 'Creation complete' in line:
+                resource_match = re.search(r'(\w+\.\w+(?:\[[^\]]+\])?):', line)
+                if resource_match:
+                    created_resources.append(resource_match.group(1))
+            elif 'Modifying...' in line or 'Modifications complete' in line:
+                resource_match = re.search(r'(\w+\.\w+(?:\[[^\]]+\])?):', line)
+                if resource_match:
+                    updated_resources.append(resource_match.group(1))
+            elif 'Destroying...' in line or 'Destruction complete' in line:
+                resource_match = re.search(r'(\w+\.\w+(?:\[[^\]]+\])?):', line)
+                if resource_match:
+                    destroyed_resources.append(resource_match.group(1))
+        
+        # Display changes
+        if created_resources:
+            print(f"\n   CREATE:")
+            for resource in set(created_resources):
+                print(f"      \033[92m[+]\033[0m {resource}")
+                
+        if updated_resources:
+            print(f"\n   UPDATE:")
+            for resource in set(updated_resources):
+                print(f"      \033[94m[~]\033[0m {resource}")
+                
+        if destroyed_resources:
+            print(f"\n   DELETE:")
+            for resource in set(destroyed_resources):
+                print(f"      \033[91m[-]\033[0m {resource}")
+    
+    def _show_errors_from_log(self, log_content: str, modules: List[str]):
+        """Show errors from log"""
+        # Check for state lock errors
+        state_lock_errors = self._check_state_lock_errors(log_content)
+        
+        # Check for other errors
+        other_errors = self._check_other_errors(log_content)
+        
+        # Only show error summary if there are actual errors
+        if state_lock_errors or other_errors:
+            print(f"\n📊 ERROR SUMMARY:")
+            print(f"   Total modules: {len(modules)}")
+            print(f"   State lock errors: {len(state_lock_errors)}")
+            print(f"   Other errors: {len(other_errors)}")
+            
+            if state_lock_errors:
+                print(f"\n🔒 STATE LOCK ERRORS:")
+                for module, error in state_lock_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+                    
+            if other_errors:
+                print(f"\n❌ OTHER ERRORS:")
+                for module, error in other_errors.items():
+                    print(f"   🔴 [{module}] - {error}")
+    
+    def _check_state_lock_errors(self, log_content: str) -> Dict[str, str]:
+        """Check for state lock errors in log"""
+        state_lock_errors = {}
+        
+        # Process line by line for better performance
+        lines = log_content.split('\n')
+        for line in lines:
+            if 'Error acquiring the state lock' in line:
+                # Extract module name from the line
+                module_match = re.search(r'\[([^\]]+)\]', line)
+                if module_match:
+                    module = module_match.group(1)
+                    # Only add if not already present (avoid duplicates)
+                    if module not in state_lock_errors:
+                        state_lock_errors[module] = "State lock error - another process is using the state"
+            
+        return state_lock_errors
+        
+    def _check_other_errors(self, log_content: str) -> Dict[str, str]:
+        """Check for other types of errors with smart parsing"""
+        other_errors = {}
+        
+        # Split log into lines for better analysis
+        lines = log_content.split('\n')
+        
+        for i, line in enumerate(lines):
+            # Look for terraform error patterns that are NOT in configuration
+            if self._is_real_terraform_error(line):
+                # Extract module name from the line
+                module_match = re.search(r'\[([^\]]+)\]', line)
+                if module_match:
+                    module = module_match.group(1)
+                    
+                    # Get the actual error message (next few lines might contain details)
+                    error_msg = self._extract_error_message(lines, i)
+                    
+                    if module not in other_errors:
+                        other_errors[module] = error_msg
+                    
+        return other_errors
+    
+    def _is_real_terraform_error(self, line: str) -> bool:
+        """Check if line contains a real terraform error (not configuration or plan output)"""
+        # Skip lines that are clearly plan output or configuration content
+        if any(skip_pattern in line for skip_pattern in [
+            'expression /', 'filter', 'parse>',
+            'key_name', 'reserve_data', 'emit_invalid', 'record[',
+            'upcase', 'TRANLOG', 'WARN', 'INFO', 'DEBUG',
+            # Plan output patterns
+            '~ ',  # Plan changes
+            '+ ',  # Plan additions  
+            '- ',  # Plan deletions
+            'will be created',
+            'will be updated',
+            'will be destroyed',
+            'No changes',
+            'Plan:',
+            'Apply complete!',
+            'Terraform will perform the following actions:',
+            'Changes to Outputs:',
+            'You can apply this plan',
+            'Do you want to perform these actions?',
+            'timeout_sec',
+            'unchanged attributes hidden'
+        ]):
+            return False
+            
+        # Look for real terraform error patterns
+        real_error_patterns = [
+            r'Error:',
+            r'Error acquiring',
+            r'Error message:',
+            r'Error creating',
+            r'Error updating', 
+            r'Error deleting',
+            r'Error loading',
+            r'failed to',
+            r'command failed',
+            r'Failed to execute',
+            r'terraform: Error',
+            r'STDERR.*Error',
+            r'ERROR.*terraform',
+            r'Permission denied',
+            r'Quota exceeded',
+            r'Timeout',
+            r'Resource not found',
+            r'Invalid configuration',
+            r'already exists',
+            r'not found',
+            r'forbidden',
+            r'conflict',
+            r'connection refused'
+        ]
+        
+        for pattern in real_error_patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                return True
+                
+        return False
+    
+    def _extract_error_message(self, lines: List[str], start_index: int) -> str:
+        """Extract the actual error message from the log lines"""
+        error_parts = []
+        
+        # Start from the error line and collect relevant error details
+        for i in range(start_index, min(start_index + 5, len(lines))):
+            line = lines[i].strip()
+            
+            # Skip empty lines and configuration content (but allow terraform: errors)
+            if not line or any(skip in line for skip in ['expression']):
+                continue
+                
+            # Extract the error part (after module name)
+            if '[' in line and ']' in line:
+                # Extract everything after the module name
+                parts = line.split(']', 1)
+                if len(parts) > 1:
+                    error_part = parts[1].strip()
+                    if error_part:
+                        error_parts.append(error_part)
+            else:
+                error_parts.append(line)
+        
+        # Join error parts and clean up
+        error_msg = ' '.join(error_parts)
+        
+        # Clean up the error message
+        if len(error_msg) > 150:
+            error_msg = error_msg[:150] + "..."
+            
+        return error_msg if error_msg else "Error occurred"
+        
+    def _check_if_log_has_errors(self) -> bool:
+        """Check if the log file contains actual errors"""
+        try:
+            with open(self.log_file, 'r') as f:
+                log_content = f.read()
+                
+            # Check for common error patterns
+            error_patterns = [
+                'Error acquiring the state lock',
+                'Error:',
+                'failed:',
+                'ERROR',
+                'Failed to execute',
+                'command failed'
+            ]
+            
+            for pattern in error_patterns:
+                if pattern in log_content:
+                    return True
+                    
+            return False
+            
+        except Exception:
+            return False
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python tg-analyzer.py <plan|apply> [directory] [--log-only [logfile]] [--detailed] [--auto-approve]")
+        print("Example: python tg-analyzer.py plan environments/pre-prod/ten-gw-dev")
+        print("Example: python tg-analyzer.py apply environments/pre-prod/ten-gw-dev --auto-approve")
+        print("Example: python tg-analyzer.py plan environments/pre-prod/ten-gw-dev --log-only")
+        print("Example: python tg-analyzer.py plan environments/pre-prod/ten-gw-dev --log-only terragrunt-plan.log.hanging")
+        print("Example: python tg-analyzer.py plan environments/pre-prod/ten-gw-dev --detailed")
+        sys.exit(1)
+        
+    operation = sys.argv[1].lower()
+    if operation not in ['plan', 'apply']:
+        print("Operation must be 'plan' or 'apply'")
+        sys.exit(1)
+    
+    # Parse arguments
+    base_dir = "."
+    log_only = False
+    log_file = None
+    detailed = False
+    auto_approve = False
+    
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == "--log-only":
+            log_only = True
+            # Check if next argument is a log file name
+            if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith('--'):
+                log_file = sys.argv[i + 1]
+                i += 1
+        elif arg == "--detailed":
+            detailed = True
+        elif arg == "--auto-approve":
+            auto_approve = True
+        elif not arg.startswith('--'):
+            base_dir = arg
+        i += 1
+        
+    analyzer = TerragruntAnalyzer(operation, base_dir, detailed=detailed, auto_approve=auto_approve)
+    
+    if log_only:
+        if log_file:
+            analyzer.analyze_log_only(log_file)
+        else:
+            analyzer.analyze_log_only()
+    else:
+        analyzer.analyze()
+
+if __name__ == "__main__":
+    main()

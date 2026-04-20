@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""
+Terragrunt Configuration Content Comparison Tool
+
+This script compares the actual configuration content between corresponding .hcl files
+in two environments, showing what was added, removed, or changed.
+"""
+
+import os
+import sys
+import argparse
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+import difflib
+
+
+class TerragruntConfigComparator:
+    def __init__(self, env1_path: str, env2_path: str):
+        self.env1_path = Path(env1_path)
+        self.env2_path = Path(env2_path)
+        self.env1_name = self.env1_path.name
+        self.env2_name = self.env2_path.name
+        
+        if not self.env1_path.exists():
+            raise FileNotFoundError(f"Environment 1 path does not exist: {env1_path}")
+        if not self.env2_path.exists():
+            raise FileNotFoundError(f"Environment 2 path does not exist: {env2_path}")
+
+    def find_hcl_files(self, base_path: Path) -> Dict[str, Path]:
+        """Find all .hcl files recursively and return relative path mapping."""
+        hcl_files = {}
+        
+        for hcl_file in base_path.rglob("*.hcl"):
+            # Skip cache directories and generated files
+            if ".terragrunt-cache" in str(hcl_file) or ".terraform" in str(hcl_file):
+                continue
+            
+            # Skip main config files
+            if hcl_file.name in ["env.hcl", "root.hcl"]:
+                continue
+                
+            # Get relative path from base_path
+            rel_path = hcl_file.relative_to(base_path)
+            hcl_files[str(rel_path)] = hcl_file
+            
+        return hcl_files
+
+    def read_file_content(self, file_path: Path) -> List[str]:
+        """Read file content and return as list of lines."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.readlines()
+        except Exception as e:
+            return [f"# Error reading file: {e}\n"]
+
+    def format_unified_diff(self, file_path: str, env1_content: List[str], 
+                           env2_content: List[str]) -> str:
+        """Format differences in unified diff style with clear indicators."""
+        output = []
+        output.append("=" * 80)
+        output.append(f"FILE: {file_path}")
+        output.append(f"SOURCE: {self.env1_name} -> DESTINATION: {self.env2_name}")
+        output.append("=" * 80)
+        output.append("")
+        
+        # Use difflib to create unified diff
+        # Note: env1 is source (dev), env2 is destination (prod)
+        # So we want to show what needs to change in prod to match dev
+        diff = difflib.unified_diff(
+            env2_content,  # Current state (prod)
+            env1_content,  # Target state (dev)
+            fromfile=f"{self.env2_name} (current)",
+            tofile=f"{self.env1_name} (target)",
+            lineterm=""
+        )
+        
+        diff_lines = list(diff)
+        if not diff_lines:
+            output.append("✓ No differences found - files are identical")
+        else:
+            for line in diff_lines:
+                if line.startswith('---') or line.startswith('+++'):
+                    # Skip the header lines
+                    continue
+                elif line.startswith('@@'):
+                    # Format the hunk header nicely
+                    output.append(f"📍 {line}")
+                elif line.startswith('-'):
+                    # Line to remove from prod (current state)
+                    output.append(f"❌ {line[1:].rstrip()}")
+                elif line.startswith('+'):
+                    # Line to add to prod (target state)
+                    output.append(f"✅ {line[1:].rstrip()}")
+                else:
+                    # Context line
+                    output.append(f"   {line.rstrip()}")
+        
+        output.append("")  # Empty line for readability
+        return "\n".join(output)
+
+    def format_side_by_side_diff(self, file_path: str, env1_content: List[str], 
+                                env2_content: List[str]) -> str:
+        """Format differences in side-by-side style."""
+        output = []
+        output.append(f"# File: {file_path}")
+        output.append(f"# {self.env1_name} vs {self.env2_name}")
+        output.append("")
+        
+        # Use difflib to create side-by-side diff
+        diff = difflib.unified_diff(
+            env1_content,
+            env2_content,
+            fromfile=f"{self.env1_name}",
+            tofile=f"{self.env2_name}",
+            lineterm=""
+        )
+        
+        diff_lines = list(diff)
+        if not diff_lines:
+            output.append("# No differences found")
+        else:
+            # Parse the unified diff and format it nicely
+            current_hunk = None
+            for line in diff_lines:
+                if line.startswith('@@'):
+                    if current_hunk:
+                        output.append("")
+                    current_hunk = line
+                    output.append(f"# {current_hunk}")
+                elif line.startswith('-'):
+                    output.append(f"# REMOVED: {line[1:].rstrip()}")
+                elif line.startswith('+'):
+                    output.append(f"# ADDED:   {line[1:].rstrip()}")
+                elif line.startswith(' '):
+                    output.append(f"# SAME:    {line[1:].rstrip()}")
+        
+        output.append("")  # Empty line for readability
+        return "\n".join(output)
+
+    def compare_configs(self, format_style: str = "unified") -> str:
+        """Compare all .hcl files between environments."""
+        output = []
+        
+        # Find all .hcl files in both environments
+        env1_files = self.find_hcl_files(self.env1_path)
+        env2_files = self.find_hcl_files(self.env2_path)
+        
+        # Get all unique file paths
+        all_files = set(env1_files.keys()) | set(env2_files.keys())
+        all_files = sorted(all_files)
+        
+        if not all_files:
+            return "No .hcl configuration files found in either environment."
+        
+        output.append("=" * 80)
+        output.append("TERRAGRUNT CONFIGURATION COMPARISON")
+        output.append("=" * 80)
+        output.append(f"SOURCE (Dev):     {self.env1_name} ({self.env1_path})")
+        output.append(f"DESTINATION (Prod): {self.env2_name} ({self.env2_path})")
+        output.append(f"FORMAT:           {format_style}")
+        output.append("=" * 80)
+        output.append("")
+        
+        differences_found = False
+        
+        for file_path in all_files:
+            env1_file = env1_files.get(file_path)
+            env2_file = env2_files.get(file_path)
+            
+            if env1_file and env2_file:
+                # Both environments have this file
+                env1_content = self.read_file_content(env1_file)
+                env2_content = self.read_file_content(env2_file)
+                
+                # Check if files are identical
+                if env1_content != env2_content:
+                    if format_style == "unified":
+                        diff = self.format_unified_diff(file_path, env1_content, env2_content)
+                    else:
+                        diff = self.format_side_by_side_diff(file_path, env1_content, env2_content)
+                    output.append(diff)
+                    differences_found = True
+                else:
+                    output.append(f"✓ {file_path} - IDENTICAL")
+                    output.append("")
+            elif env1_file:
+                # Only environment 1 has this file
+                env1_content = self.read_file_content(env1_file)
+                output.append("=" * 80)
+                output.append(f"FILE: {file_path}")
+                output.append(f"STATUS: ONLY IN SOURCE ({self.env1_name}) - NEEDS TO BE ADDED TO PROD")
+                output.append("=" * 80)
+                output.append("")
+                for line in env1_content:
+                    output.append(f"✅ {line.rstrip()}")
+                output.append("")
+                differences_found = True
+            elif env2_file:
+                # Only environment 2 has this file
+                env2_content = self.read_file_content(env2_file)
+                output.append("=" * 80)
+                output.append(f"FILE: {file_path}")
+                output.append(f"STATUS: ONLY IN DESTINATION ({self.env2_name}) - NEEDS TO BE REMOVED FROM PROD")
+                output.append("=" * 80)
+                output.append("")
+                for line in env2_content:
+                    output.append(f"❌ {line.rstrip()}")
+                output.append("")
+                differences_found = True
+        
+        if not differences_found:
+            output.append("# No configuration differences found between environments.")
+        
+        return "".join(output)
+
+    def generate_summary(self) -> str:
+        """Generate a summary of configuration differences."""
+        env1_files = self.find_hcl_files(self.env1_path)
+        env2_files = self.find_hcl_files(self.env2_path)
+        
+        all_files = set(env1_files.keys()) | set(env2_files.keys())
+        common_files = set(env1_files.keys()) & set(env2_files.keys())
+        env1_only = set(env1_files.keys()) - set(env2_files.keys())
+        env2_only = set(env2_files.keys()) - set(env1_files.keys())
+        
+        # Count actual differences in common files
+        different_files = 0
+        for file_path in common_files:
+            env1_content = self.read_file_content(env1_files[file_path])
+            env2_content = self.read_file_content(env2_files[file_path])
+            if env1_content != env2_content:
+                different_files += 1
+        
+        summary = []
+        summary.append(f"# Configuration Summary: {self.env1_name} vs {self.env2_name}")
+        summary.append(f"Total configuration files: {len(all_files)}")
+        summary.append(f"Common files: {len(common_files)}")
+        summary.append(f"Files with differences: {different_files}")
+        summary.append(f"Files only in {self.env1_name}: {len(env1_only)}")
+        summary.append(f"Files only in {self.env2_name}: {len(env2_only)}")
+        summary.append("")
+        
+        if env1_only:
+            summary.append(f"# Configuration files only in {self.env1_name}:")
+            for file_path in sorted(env1_only):
+                summary.append(f"  - {file_path}")
+            summary.append("")
+        
+        if env2_only:
+            summary.append(f"# Configuration files only in {self.env2_name}:")
+            for file_path in sorted(env2_only):
+                summary.append(f"  - {file_path}")
+            summary.append("")
+        
+        return "\n".join(summary)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compare Terragrunt configuration content between two environments",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Compare dev and prod configurations
+  python compare_terragrunt_configs.py environments/pre-prod/ten-gw-dev environments/prod/ten-gw-prod
+
+  # Use side-by-side format
+  python compare_terragrunt_configs.py environments/pre-prod/ten-gw-dev environments/prod/ten-gw-prod --format side-by-side
+
+  # Show summary only
+  python compare_terragrunt_configs.py environments/pre-prod/ten-gw-dev environments/prod/ten-gw-prod --summary
+
+  # Save to file
+  python compare_terragrunt_configs.py environments/pre-prod/ten-gw-dev environments/prod/ten-gw-prod --output comparison.txt
+        """
+    )
+    
+    parser.add_argument("env1", help="Path to first environment directory")
+    parser.add_argument("env2", help="Path to second environment directory")
+    parser.add_argument("--format", choices=["unified", "side-by-side"], default="unified",
+                       help="Output format: unified (unified diff) or side-by-side")
+    parser.add_argument("--summary", action="store_true",
+                       help="Show only summary of differences")
+    parser.add_argument("--output", "-o", help="Output file (default: stdout)")
+    
+    args = parser.parse_args()
+    
+    try:
+        comparator = TerragruntConfigComparator(args.env1, args.env2)
+        
+        if args.summary:
+            output = comparator.generate_summary()
+        else:
+            output = comparator.compare_configs(format_style=args.format)
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+            print(f"Configuration comparison written to {args.output}")
+        else:
+            # Auto-output to tg-compare.txt if no output specified
+            with open('tg-compare.txt', 'w') as f:
+                f.write(output)
+            print(f"Configuration comparison written to tg-compare.txt")
+            print(output)  # Also display on stdout
+            
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
