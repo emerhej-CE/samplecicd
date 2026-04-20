@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - qa
+  push:
+    branches:
+      - qa
 
 permissions:
   contents: read
