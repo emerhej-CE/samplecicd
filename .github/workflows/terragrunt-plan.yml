@@ -1,4 +1,8 @@
-# Comment-only marker for manual pushes / PR workflow testing (no behavior change).
+# Portable Terragrunt plan — configure repo Variables (Settings → Secrets and variables → Actions → Variables):
+#   AWS_ROLE_ARN, AWS_REGION (required)
+#   TG_STACKS_DIR (optional) — default live/dev/us-east-1
+#   TG_VERSION (optional) — default 0.67.16
+# noop: comment-only change for manual qa push testing
 name: Terragrunt Plan
 
 on:
@@ -19,6 +23,8 @@ jobs:
   discover:
     name: Discover Terragrunt stacks
     runs-on: ubuntu-latest
+    env:
+      TG_STACKS_DIR: ${{ vars.TG_STACKS_DIR }}
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
@@ -36,7 +42,7 @@ jobs:
           import sys
           from collections import defaultdict, deque
 
-          BASE = os.environ.get("TG_STACKS_DIR", "live/dev/us-east-1")
+          BASE = (os.environ.get("TG_STACKS_DIR") or "").strip() or "live/dev/us-east-1"
           MODE = os.environ.get("TG_MODE", "apply")
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
@@ -100,7 +106,7 @@ jobs:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: live/dev/us-east-1/${{ matrix.module }}
+        working-directory: ${{ vars.TG_STACKS_DIR != '' && vars.TG_STACKS_DIR || 'live/dev/us-east-1' }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -111,8 +117,10 @@ jobs:
         with:
           terraform_wrapper: false
       - name: Install Terragrunt
+        env:
+          TG_VERSION_INPUT: ${{ vars.TG_VERSION }}
         run: |
-          TG_VERSION=0.67.16
+          TG_VERSION="${TG_VERSION_INPUT:-0.67.16}"
           wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
