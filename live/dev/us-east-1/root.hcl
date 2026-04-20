@@ -1,4 +1,4 @@
-# Regional root — same pattern as portal-mono tzkr/live/dev/us-east-1/root.hcl
+# Regional root — same pattern as portal-mono live/dev/us-east-1/root.hcl
 locals {
   aws_region       = "us-east-1"
   aws_profile      = "tazakerV3"

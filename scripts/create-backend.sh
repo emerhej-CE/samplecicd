@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Terraform Backend Creation Script for tzkr
+# Terraform backend creation script (repo root layout)
 # This script creates S3 bucket and DynamoDB table for Terraform state
 # with best practices and security hardening built-in
 
