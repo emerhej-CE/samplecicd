@@ -1,7 +1,9 @@
 # Regional root — same pattern as portal-mono live/dev/us-east-1/root.hcl
 locals {
-  aws_region       = "us-east-1"
-  aws_profile      = "tazakerV3"
+  aws_region = "us-east-1"
+  # Optional named profile for local runs only. Leave unset in CI so the AWS provider
+  # uses the default chain (e.g. GitHub Actions OIDC). Example: export TG_AWS_PROFILE=tazakerV3
+  aws_profile      = get_env("TG_AWS_PROFILE", "")
   backend_bucket   = get_env("TG_BACKEND_BUCKET", "tazakerv3-dev-terraform-state-use1")
   backend_dynamodb = get_env("TG_BACKEND_DYNAMODB", "tazakerv3-dev-terraform-use1-locks")
 }
@@ -51,8 +53,7 @@ generate "provider" {
   if_exists = "overwrite"
   contents  = <<EOF
 provider "aws" {
-  region  = "${local.aws_region}"
-  profile = "${local.aws_profile}"
+  region = "${local.aws_region}"${local.aws_profile == "" ? "" : "\n  profile = \"${local.aws_profile}\""}
 }
 EOF
 }
