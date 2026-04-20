@@ -1,12 +1,7 @@
 name: Terragrunt Destroy
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type DESTROY to confirm (irreversible)'
-        required: true
-        type: string
+  workflow_dispatch:   # manual trigger
 
 permissions:
   contents: read
@@ -15,7 +10,6 @@ permissions:
 jobs:
   destroy:
     name: Destroy ${{ matrix.module }}
-    if: github.event.inputs.confirmation == 'DESTROY'
     runs-on: ubuntu-latest
 
     strategy:
@@ -48,7 +42,6 @@ jobs:
           wget -O terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
-          terragrunt --version
 
       - name: Terragrunt Init
         run: terragrunt init -input=false --terragrunt-non-interactive
