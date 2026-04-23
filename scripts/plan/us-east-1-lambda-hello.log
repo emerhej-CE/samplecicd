@@ -1,8 +1,0 @@
-
-  20:19:45.616 STDOUT terraform: No changes. Your infrastructure matches the  
-  configuration.                                                              
-  20:19:45.616 STDOUT terraform: Terraform has compared your real             
-  infrastructure against your configuration                                   
-  20:19:45.616 STDOUT terraform: and found no differences, so no changes are  
-  needed.                                                                     
-
