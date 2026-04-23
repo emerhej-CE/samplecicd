@@ -1,5 +1,5 @@
 # Portable Terragrunt destroy — repo Variables: AWS_ROLE_ARN, AWS_REGION (required);
-#   TG_STACKS_DIR (optional, default live/dev/us-east-1); TG_VERSION (optional, default 0.67.16)
+#   TG_STACKS_DIR (optional, default live/qa/us-east-1); TG_VERSION (optional, default 0.67.16)
 name: Terragrunt Destroy
 
 on:
@@ -32,7 +32,7 @@ jobs:
           import sys
           from collections import defaultdict, deque
 
-          BASE = (os.environ.get("TG_STACKS_DIR") or "").strip() or "live/dev/us-east-1"
+          BASE = (os.environ.get("TG_STACKS_DIR") or "").strip() or "live/qa/us-east-1"
           MODE = os.environ.get("TG_MODE", "apply")
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
@@ -96,7 +96,7 @@ jobs:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: ${{ vars.TG_STACKS_DIR != '' && vars.TG_STACKS_DIR || 'live/dev/us-east-1' }}/${{ matrix.module }}
+        working-directory: ${{ vars.TG_STACKS_DIR != '' && vars.TG_STACKS_DIR || 'live/qa/us-east-1' }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
