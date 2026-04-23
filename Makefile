@@ -1,7 +1,6 @@
 # Makefile for valpay-aws-terraform
 .PHONY: help validate plan apply destroy clean fmt lint docs compare create-backend init _init-modules fix-providers
 
-# Comment-only change to allow a harmless commit for pipeline testing.
 
 # Default target
 help: ## Show this help message
