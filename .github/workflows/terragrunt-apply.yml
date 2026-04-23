@@ -186,11 +186,18 @@ jobs:
               f.write("EOF\n")
           PY
 
-  apply:
-    name: Apply ${{ matrix.module }}
+  approval:
+    name: Wait for QA environment approval
     needs: [discover]
     runs-on: ubuntu-latest
     environment: qa
+    steps:
+      - run: echo "Waiting for approval"
+
+  apply:
+    name: Apply ${{ matrix.module }}
+    needs: [discover, approval]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
