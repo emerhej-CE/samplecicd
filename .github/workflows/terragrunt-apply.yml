@@ -8,6 +8,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/terragrunt-apply.yml"
+      - "modules/**"
+      - "live/qa/**"
 
 permissions:
   contents: read
