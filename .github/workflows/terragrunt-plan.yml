@@ -1,8 +1,9 @@
 # Portable Terragrunt plan — configure repo Variables (Settings → Secrets and variables → Actions → Variables):
 #   AWS_ROLE_ARN, AWS_REGION (required)
-#   TG_STACKS_DIR (optional) — default live/qa/us-east-1
+#   TG_STACKS_DIR (optional) — if set, used as the stack root and skips auto-detection from the git diff
 #   TG_VERSION (optional) — default 0.67.16
-# noop: comment-only change for manual qa push testing
+# Stack root is auto-detected from changed paths under live/<env>/<region> (see discover job),
+#   except: modules/** or workflow-only or no live root → default live/qa/us-east-1
 name: Terragrunt Plan
 
 on:
@@ -32,26 +33,113 @@ jobs:
     name: Discover Terragrunt stacks
     runs-on: ubuntu-latest
     env:
-      TG_STACKS_DIR: ${{ vars.TG_STACKS_DIR }}
+      # Repo override, event SHAs, and default for modules/ / unmapped diffs (no live/<env>/<region> in paths)
+      REPO_TG_STACKS: ${{ vars.TG_STACKS_DIR }}
+      DEFAULT_TG_ROOT: "live/qa/us-east-1"
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+      PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+      PUSH_BEFORE: ${{ github.event.before }}
+      PUSH_AFTER: ${{ github.event.after || github.sha }}
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
+      tg_stacks_dir_dynamic: ${{ steps.set.outputs.tg_stacks_dir_dynamic }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: set
         env:
           TG_MODE: plan
         run: |
           set -euo pipefail
-          JSON=$(python3 <<'PY'
+          python3 <<'PY'
           import glob
           import json
           import os
           import re
+          import subprocess
           import sys
           from collections import defaultdict, deque
 
-          BASE = (os.environ.get("TG_STACKS_DIR") or "").strip() or "live/qa/us-east-1"
+          # --- resolve BASE = live/<env>/<region> (Terragrunt stacks parent) ---
+          DEFAULT_BASE = (os.environ.get("DEFAULT_TG_ROOT") or "live/qa/us-east-1").strip()
+          override = (os.environ.get("REPO_TG_STACKS") or "").strip()
+          if override:
+              base = override
+          else:
+              def is_aws_region_segment(s: str) -> bool:
+                  if s in ("config", "live", "modules"):
+                      return False
+                  # e.g. us-east-1, ap-south-1, ap-southeast-1
+                  return bool(re.match(r"^[a-z0-9]+(-[a-z0-9]+)*-[0-9]+$", s) and s.count("-") >= 1)
+
+              def get_changed_files():
+                  ev = os.environ.get("GITHUB_EVENT_NAME", "")
+                  if ev == "pull_request":
+                      b = os.environ.get("PR_BASE_SHA", "").strip()
+                      h = os.environ.get("PR_HEAD_SHA", "").strip()
+                      if not b or not h:
+                          print("error: missing PR base/head ref for diff", file=sys.stderr)
+                          sys.exit(1)
+                      out = subprocess.check_output(
+                          ["git", "diff", "--name-only", b, h], text=True, stderr=subprocess.DEVNULL
+                      )
+                  elif ev == "push":
+                      before = os.environ.get("PUSH_BEFORE", "").strip()
+                      after = os.environ.get("PUSH_AFTER", "").strip()
+                      if before in ("", "0" * 40) or (len(before) == 40 and set(before) == {"0"}):
+                          out = subprocess.check_output(
+                              ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", after], text=True
+                      )
+                      else:
+                          out = subprocess.check_output(
+                              ["git", "diff", "--name-only", before, after], text=True
+                      )
+                  else:
+                      print(f"error: unsupported event: {ev}", file=sys.stderr)
+                      sys.exit(1)
+                  return [ln for ln in out.splitlines() if ln.strip()]
+
+              def live_roots_for_path(path: str) -> set:
+                  roots: set = set()
+                  if not path.strip().startswith("live/"):
+                      return roots
+                  parts = path.split("/")
+                  if len(parts) < 3:
+                      return roots
+                  # live/<env>/<region>/... (e.g. live/qa/us-east-1/s3/terragrunt.hcl)
+                  if parts[2] != "config" and is_aws_region_segment(parts[2]):
+                      roots.add(f"live/{parts[1]}/{parts[2]}")
+                      return roots
+                  # live/<env>/config/<region>/... (yaml config next to this env)
+                  if len(parts) >= 4 and parts[2] == "config" and is_aws_region_segment(parts[3]):
+                      roots.add(f"live/{parts[1]}/{parts[3]}")
+                  return roots
+
+              changed = get_changed_files()
+              all_roots: set = set()
+              for f in changed:
+                  all_roots |= live_roots_for_path(f)
+              if len(all_roots) > 1:
+                  rlist = ", ".join(sorted(all_roots))
+                  print(
+                      f"error: terragrunt-plan supports one live/<env>/<region> root per run; this diff has multiple: {rlist}",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              if len(all_roots) == 1:
+                  base = next(iter(all_roots))
+              else:
+                  # Only modules, workflow, or unmapped live/qa files → default
+                  base = DEFAULT_BASE
+
+          if not base:
+              print("error: empty stacks root", file=sys.stderr)
+              sys.exit(1)
+          # --- build matrix (unchanged) ---
           MODE = os.environ.get("TG_MODE", "apply")
+          BASE = base
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
           def module_names():
@@ -95,13 +183,17 @@ jobs:
           order = topo_apply_order(names)
           if MODE == "destroy":
               order = list(reversed(order))
-          print(json.dumps([{"module": m} for m in order]))
+          matrix_json = json.dumps([{"module": m} for m in order])
+          gh = os.environ.get("GITHUB_OUTPUT")
+          if not gh:
+              print("error: GITHUB_OUTPUT is not set", file=sys.stderr)
+              sys.exit(1)
+          with open(gh, "a", encoding="utf-8") as f:
+              f.write(f"tg_stacks_dir_dynamic={base}\n")
+              f.write("matrix<<EOF\n")
+              f.write(matrix_json + "\n")
+              f.write("EOF\n")
           PY
-          )
-          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$JSON" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "matrix=$JSON"
 
   plan:
     name: Plan ${{ matrix.module }}
@@ -114,7 +206,7 @@ jobs:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: ${{ vars.TG_STACKS_DIR != '' && vars.TG_STACKS_DIR || 'live/qa/us-east-1' }}/${{ matrix.module }}
+        working-directory: ${{ needs.discover.outputs.tg_stacks_dir_dynamic }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
