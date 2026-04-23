@@ -1,0 +1,7 @@
+# RDS PostgreSQL — small instance (db.t4g.micro is free-tier–eligible where offered).
+instance_class: db.t4g.micro
+allocated_storage: 20
+engine_version: "16.4"
+db_name: appdb
+master_username: appadmin
+tags: {}
