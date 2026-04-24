@@ -1,19 +1,17 @@
-# Portable Terragrunt apply — configure repo Variables (Settings → Secrets and variables → Actions → Variables):
-#   PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required) — dev/qa use preprod, prod uses prod
-#   TG_STACKS_DIR (optional) — if set, used as the stack root and skips auto-detection from the git diff
-#   TG_VERSION (optional) — default 0.67.16
-# Stack root is auto-detected from changed paths under live/<env>/<region> (see discover job),
-#   except: modules/** or workflow-only or no live root → default live/qa/us-east-1
+# Apply on push. preprod: live/dev or live/qa, PREPROD_AWS_ROLE_ARN, no environment gate.
+#   production: live/prod, PROD_AWS_ROLE_ARN, one job with environment: prod then all modules.
+#   Variables: PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
 name: Terragrunt Apply
 
 on:
   push:
     branches:
-      - main
+      - preprod
+      - production
     paths:
       - ".github/workflows/terragrunt-apply.yml"
       - "modules/**"
-      - "live/qa/**"
+      - "live/**"
 
 permissions:
   contents: read
@@ -24,12 +22,9 @@ jobs:
     name: Discover Terragrunt stacks
     runs-on: ubuntu-latest
     env:
-      # Repo override, event SHAs, and default for modules/ / unmapped diffs (no live/<env>/<region> in paths)
       REPO_TG_STACKS: ${{ vars.TG_STACKS_DIR }}
       DEFAULT_TG_ROOT: "live/qa/us-east-1"
-      GITHUB_EVENT_NAME: ${{ github.event_name }}
-      PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-      PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+      PUSH_REF_NAME: ${{ github.ref_name }}
       PUSH_BEFORE: ${{ github.event.before }}
       PUSH_AFTER: ${{ github.event.after || github.sha }}
     outputs:
@@ -57,6 +52,7 @@ jobs:
           # --- resolve BASE = live/<env>/<region> (Terragrunt stacks parent) ---
           DEFAULT_BASE = (os.environ.get("DEFAULT_TG_ROOT") or "live/qa/us-east-1").strip()
           override = (os.environ.get("REPO_TG_STACKS") or "").strip()
+          inferred_from_default = False
           if override:
               base = override
           else:
@@ -67,30 +63,16 @@ jobs:
                   return bool(re.match(r"^[a-z0-9]+(-[a-z0-9]+)*-[0-9]+$", s) and s.count("-") >= 1)
 
               def get_changed_files():
-                  ev = os.environ.get("GITHUB_EVENT_NAME", "")
-                  if ev == "pull_request":
-                      b = os.environ.get("PR_BASE_SHA", "").strip()
-                      h = os.environ.get("PR_HEAD_SHA", "").strip()
-                      if not b or not h:
-                          print("error: missing PR base/head ref for diff", file=sys.stderr)
-                          sys.exit(1)
+                  before = os.environ.get("PUSH_BEFORE", "").strip()
+                  after = os.environ.get("PUSH_AFTER", "").strip()
+                  if before in ("", "0" * 40) or (len(before) == 40 and set(before) == {"0"}):
                       out = subprocess.check_output(
-                          ["git", "diff", "--name-only", b, h], text=True, stderr=subprocess.DEVNULL
-                      )
-                  elif ev == "push":
-                      before = os.environ.get("PUSH_BEFORE", "").strip()
-                      after = os.environ.get("PUSH_AFTER", "").strip()
-                      if before in ("", "0" * 40) or (len(before) == 40 and set(before) == {"0"}):
-                          out = subprocess.check_output(
-                              ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", after], text=True
-                      )
-                      else:
-                          out = subprocess.check_output(
-                              ["git", "diff", "--name-only", before, after], text=True
+                          ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", after], text=True
                       )
                   else:
-                      print(f"error: unsupported event: {ev}", file=sys.stderr)
-                      sys.exit(1)
+                      out = subprocess.check_output(
+                          ["git", "diff", "--name-only", before, after], text=True
+                      )
                   return [ln for ln in out.splitlines() if ln.strip()]
 
               def live_roots_for_path(path: str) -> set:
@@ -123,8 +105,8 @@ jobs:
               if len(all_roots) == 1:
                   base = next(iter(all_roots))
               else:
-                  # Only modules, workflow, or unmapped live/qa files → default
                   base = DEFAULT_BASE
+                  inferred_from_default = len(all_roots) == 0
 
           if not base:
               print("error: empty stacks root", file=sys.stderr)
@@ -134,6 +116,25 @@ jobs:
               print("error: could not derive live env from base", file=sys.stderr)
               sys.exit(1)
           live_env = pbase[1]
+          ref = (os.environ.get("PUSH_REF_NAME") or "").strip()
+          if (not override) and ref == "production" and inferred_from_default:
+              print(
+                  "error: production apply needs a change under live/prod/ in the diff, or set TG_STACKS_DIR",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "preprod" and live_env not in ("dev", "qa"):
+              print(
+                  f"error: preprod only supports live/dev/ or live/qa/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "production" and live_env != "prod":
+              print(
+                  f"error: production only supports live/prod/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
           # --- build matrix (unchanged) ---
           MODE = os.environ.get("TG_MODE", "apply")
           BASE = base
@@ -196,29 +197,24 @@ jobs:
   env-gate:
     name: Wait for prod environment approval
     needs: [discover]
-    if: needs.discover.outputs.live_env == 'prod'
+    if: always() && needs.discover.conclusion == 'success' && github.ref_name == 'production'
     runs-on: ubuntu-latest
     environment: prod
     steps:
       - run: echo "Waiting for approval"
 
   no-gate:
-    name: Apply without environment gate
+    name: No GitHub environment (preprod)
     needs: [discover]
-    if: needs.discover.outputs.live_env != 'prod'
+    if: always() && needs.discover.conclusion == 'success' && github.ref_name == 'preprod'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "No GitHub environment (dev/qa)"
+      - run: echo "Proceed to apply (preprod, no environment gate)"
 
   gate-done:
     name: Ready to apply
     needs: [discover, env-gate, no-gate]
-    if: |
-      always() && needs.discover.result == 'success' &&
-      (
-        (needs.env-gate.result == 'success' && needs.no-gate.result == 'skipped') ||
-        (needs.env-gate.result == 'skipped' && needs.no-gate.result == 'success')
-      )
+    if: always() && needs.discover.conclusion == 'success' && ((needs.env-gate.conclusion == 'success' && needs.no-gate.conclusion == 'skipped') || (needs.env-gate.conclusion == 'skipped' && needs.no-gate.conclusion == 'success'))
     runs-on: ubuntu-latest
     steps:
       - run: echo "Proceeding to apply"

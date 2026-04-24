@@ -1,27 +1,24 @@
-# Portable Terragrunt plan — configure repo Variables (Settings → Secrets and variables → Actions → Variables):
-#   PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required) — dev/qa use preprod, prod uses prod
-#   TG_STACKS_DIR (optional) — if set, used as the stack root and skips auto-detection from the git diff
-#   TG_VERSION (optional) — default 0.67.16
-# Stack root is auto-detected from changed paths under live/<env>/<region> (see discover job),
-#   except: modules/** or workflow-only or no live root → default live/qa/us-east-1
+# Plan on PR and push. preprod: live/dev or live/qa; production: live/prod only. One live/<env>/<region> per run.
+#   Variables: PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
 name: Terragrunt Plan
 
 on:
   pull_request:
     branches:
-      - main
-      - qa
+      - preprod
+      - production
     paths:
       - ".github/workflows/terragrunt-plan.yml"
       - "modules/**"
-      - "live/qa/**"
+      - "live/**"
   push:
     branches:
-      - qa
+      - preprod
+      - production
     paths:
       - ".github/workflows/terragrunt-plan.yml"
       - "modules/**"
-      - "live/qa/**"
+      - "live/**"
 
 permissions:
   contents: read
@@ -39,6 +36,8 @@ jobs:
       GITHUB_EVENT_NAME: ${{ github.event_name }}
       PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
       PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+      PR_TARGET_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
+      PUSH_REF_NAME: ${{ github.event_name == 'push' && github.ref_name || '' }}
       PUSH_BEFORE: ${{ github.event.before }}
       PUSH_AFTER: ${{ github.event.after || github.sha }}
     outputs:
@@ -66,6 +65,7 @@ jobs:
           # --- resolve BASE = live/<env>/<region> (Terragrunt stacks parent) ---
           DEFAULT_BASE = (os.environ.get("DEFAULT_TG_ROOT") or "live/qa/us-east-1").strip()
           override = (os.environ.get("REPO_TG_STACKS") or "").strip()
+          inferred_from_default = False
           if override:
               base = override
           else:
@@ -132,8 +132,9 @@ jobs:
               if len(all_roots) == 1:
                   base = next(iter(all_roots))
               else:
-                  # Only modules, workflow, or unmapped live/qa files → default
+                  # default when diff has no live/ root: preprod uses live/qa; production is rejected below
                   base = DEFAULT_BASE
+                  inferred_from_default = len(all_roots) == 0
 
           if not base:
               print("error: empty stacks root", file=sys.stderr)
@@ -143,6 +144,25 @@ jobs:
               print("error: could not derive live env from base", file=sys.stderr)
               sys.exit(1)
           live_env = pbase[1]
+          ref = (os.environ.get("PR_TARGET_REF") or os.environ.get("PUSH_REF_NAME") or "").strip()
+          if (not override) and ref == "production" and inferred_from_default:
+              print(
+                  "error: production plan needs a file under live/prod/ in the diff, or set TG_STACKS_DIR",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "preprod" and live_env not in ("dev", "qa"):
+              print(
+                  f"error: preprod only supports live/dev/ or live/qa/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "production" and live_env != "prod":
+              print(
+                  f"error: production only supports live/prod/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
           # --- build matrix (unchanged) ---
           MODE = os.environ.get("TG_MODE", "apply")
           BASE = base
