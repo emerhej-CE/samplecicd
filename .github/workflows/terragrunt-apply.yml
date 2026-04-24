@@ -195,11 +195,10 @@ jobs:
   approval:
     name: Manual approval
     needs: [discover]
-    if: always() && needs.discover.conclusion == 'success' && (github.ref_name == 'preprod' || github.ref_name == 'production')
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'production' && 'prod' || 'preprod' }}
     steps:
-      - run: echo "Approved; matrix apply can run"
+      - run: echo "Approved deployment"
 
   apply:
     name: Apply ${{ matrix.module }}
