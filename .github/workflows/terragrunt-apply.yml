@@ -1,6 +1,5 @@
-# Apply on push. preprod: live/dev or live/qa, PREPROD_AWS_ROLE_ARN, no environment gate.
-#   production: live/prod, PROD_AWS_ROLE_ARN, one job with environment: prod then all modules.
-#   Variables: PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
+# Apply on push. After discover, one manual approval via GitHub Environment: preprod (dev/qa stacks) or prod (live/prod).
+#   Roles: PREPROD_AWS_ROLE_ARN for dev/qa, PROD_AWS_ROLE_ARN for prod. Variables: AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
 name: Terragrunt Apply
 
 on:
@@ -194,34 +193,18 @@ jobs:
               f.write("EOF\n")
           PY
 
-  env-gate:
-    name: Wait for prod environment approval
+  approval:
+    name: Manual approval
     needs: [discover]
-    if: always() && needs.discover.conclusion == 'success' && github.ref_name == 'production'
+    if: always() && needs.discover.conclusion == 'success'
     runs-on: ubuntu-latest
-    environment: prod
+    environment: ${{ needs.discover.outputs.live_env == 'prod' && 'prod' || 'preprod' }}
     steps:
-      - run: echo "Waiting for approval"
-
-  no-gate:
-    name: No GitHub environment (preprod)
-    needs: [discover]
-    if: always() && needs.discover.conclusion == 'success' && github.ref_name == 'preprod'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Proceed to apply (preprod, no environment gate)"
-
-  gate-done:
-    name: Ready to apply
-    needs: [discover, env-gate, no-gate]
-    if: always() && needs.discover.conclusion == 'success' && ((needs.env-gate.conclusion == 'success' && needs.no-gate.conclusion == 'skipped') || (needs.env-gate.conclusion == 'skipped' && needs.no-gate.conclusion == 'success'))
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Proceeding to apply"
+      - run: echo "Approved; matrix apply can run"
 
   apply:
     name: Apply ${{ matrix.module }}
-    needs: [discover, gate-done]
+    needs: [discover, approval]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
