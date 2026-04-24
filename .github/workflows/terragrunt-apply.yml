@@ -8,9 +8,8 @@ on:
       - preprod
       - production
     paths:
-      - ".github/workflows/terragrunt-apply.yml"
-      - "modules/**"
       - "live/**"
+      - "modules/**"
 
 permissions:
   contents: read
