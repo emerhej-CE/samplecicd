@@ -1,9 +1,19 @@
-# Portable Terragrunt destroy — repo Variables: PREPROD_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required) — dev/qa use preprod, prod uses prod
-#   TG_STACKS_DIR (optional, default live/qa/us-east-1); TG_VERSION (optional, default 0.67.16)
+# Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
+#   workflow_dispatch.stack_path (required choice). TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
+#   Run from branch preprod or production; path must match branch (see discover validation).
 name: Terragrunt Destroy
 
 on:
   workflow_dispatch:
+    inputs:
+      stack_path:
+        description: "Stack root to destroy: live/dev/us-east-1, live/qa/us-east-1, or live/prod/us-east-1"
+        required: true
+        type: choice
+        options:
+          - live/dev/us-east-1
+          - live/qa/us-east-1
+          - live/prod/us-east-1
 
 permissions:
   contents: read
@@ -13,8 +23,6 @@ jobs:
   discover:
     name: Discover Terragrunt stacks (destroy order)
     runs-on: ubuntu-latest
-    env:
-      TG_STACKS_DIR: ${{ vars.TG_STACKS_DIR }}
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       live_env: ${{ steps.set.outputs.live_env }}
@@ -23,9 +31,11 @@ jobs:
       - id: set
         env:
           TG_MODE: destroy
+          STACK_PATH: ${{ github.event.inputs.stack_path }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          JSON=$(python3 <<'PY'
+          FULL=$(python3 <<'PY'
           import glob
           import json
           import os
@@ -33,9 +43,47 @@ jobs:
           import sys
           from collections import defaultdict, deque
 
-          BASE = (os.environ.get("TG_STACKS_DIR") or "").strip() or "live/qa/us-east-1"
+          BASE = (os.environ.get("STACK_PATH") or "").strip()
+          REF = (os.environ.get("GITHUB_REF_NAME") or "").strip()
           MODE = os.environ.get("TG_MODE", "apply")
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
+
+          if not BASE:
+              print("error: stack_path is required", file=sys.stderr)
+              sys.exit(1)
+          if not BASE.startswith("live/"):
+              print(f"error: stack_path must start with live/, got {BASE!r}", file=sys.stderr)
+              sys.exit(1)
+          parts = BASE.strip("/").split("/")
+          if len(parts) != 3:
+              print(f"error: stack_path must be live/<env>/<region>, got {BASE!r}", file=sys.stderr)
+              sys.exit(1)
+          env_part, region_part = parts[1], parts[2]
+          if env_part not in ("dev", "qa", "prod"):
+              print(f"error: env must be dev, qa, or prod, got {env_part!r}", file=sys.stderr)
+              sys.exit(1)
+          if not re.fullmatch(r"[a-z0-9-]+", region_part):
+              print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
+              sys.exit(1)
+          if REF not in ("preprod", "production"):
+              print(
+                  f"error: run this workflow from branch preprod or production (got {REF!r})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if REF == "production" and BASE != "live/prod/us-east-1":
+              print(
+                  f"error: on production branch only live/prod/us-east-1 is allowed, got {BASE!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if REF == "preprod" and BASE not in ("live/dev/us-east-1", "live/qa/us-east-1"):
+              print(
+                  f"error: on preprod branch only live/dev/us-east-1 or live/qa/us-east-1, got {BASE!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          live_env = env_part
 
           def module_names():
               paths = glob.glob(os.path.join(BASE, "*", "terragrunt.hcl"))
@@ -78,16 +126,21 @@ jobs:
           order = topo_apply_order(names)
           if MODE == "destroy":
               order = list(reversed(order))
-          print(json.dumps([{"module": m} for m in order]))
+
+          obj = {
+              "matrix": [{"module": m} for m in order],
+              "live_env": live_env,
+          }
+          print(json.dumps(obj))
           PY
           )
+          MATRIX=$(echo "$FULL" | jq -c '.matrix')
+          LIVE_ENV=$(echo "$FULL" | jq -r '.live_env')
           echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$JSON" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "matrix=$JSON"
-          BASE="${TG_STACKS_DIR:-live/qa/us-east-1}"
-          LIVE_ENV="$(echo "$BASE" | cut -d/ -f2)"
           echo "live_env=$LIVE_ENV" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX live_env=$LIVE_ENV"
 
   destroy:
     name: Destroy ${{ matrix.module }}
@@ -100,12 +153,12 @@ jobs:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: ${{ vars.TG_STACKS_DIR != '' && vars.TG_STACKS_DIR || 'live/qa/us-east-1' }}/${{ matrix.module }}
+        working-directory: ${{ github.event.inputs.stack_path }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.discover.outputs.live_env == 'prod' && vars.PROD_AWS_ROLE_ARN || vars.PREPROD_AWS_ROLE_ARN }}
+          role-to-assume: ${{ needs.discover.outputs.live_env == 'dev' && vars.DEV_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'qa' && vars.QA_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'prod' && vars.PROD_AWS_ROLE_ARN || '' }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
         with:
