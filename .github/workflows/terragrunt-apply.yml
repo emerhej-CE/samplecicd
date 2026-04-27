@@ -2,7 +2,7 @@
 #   DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
 #   TG_STACKS_DIR (optional) — if set, used as the stack root and skips auto-detection from the git diff
 #   TG_VERSION (optional) — default 0.67.16
-# discover → Review before apply (GitHub Environment: preprod or prod) → matrix apply. Stack root from diff (see discover).
+# discover → preprod-approval (env preprod) OR production-approval (env production) → gate-done → matrix apply. Stack root from diff (see discover).
 #   Default live root if only modules/ changes: live/qa/us-east-1. preprod branch: live/dev, live/qa; production branch: live/prod only
 name: Terragrunt Apply
 
@@ -216,17 +216,38 @@ jobs:
               f.write("EOF\n")
           PY
 
-  approval:
-    name: Review before apply
+  preprod-approval:
+    if: needs.discover.outputs.live_env != 'prod'
     needs: [discover]
     runs-on: ubuntu-latest
-    environment: ${{ needs.discover.outputs.live_env == 'prod' && 'prod' || 'preprod' }}
+    environment: preprod
     steps:
-      - run: echo "Approved deployment"
+      - run: echo "Deployment approved"
+
+  production-approval:
+    if: needs.discover.outputs.live_env == 'prod'
+    needs: [discover]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Deployment approved"
+
+  gate-done:
+    name: gate-done
+    needs: [discover, preprod-approval, production-approval]
+    if: |
+      always() && needs.discover.result == 'success' &&
+      (
+        (needs.preprod-approval.result == 'success' && needs.production-approval.result == 'skipped') ||
+        (needs.preprod-approval.result == 'skipped' && needs.production-approval.result == 'success')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Approval gate passed"
 
   apply:
     name: Apply ${{ matrix.module }}
-    needs: [discover, approval]
+    needs: [discover, gate-done]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
