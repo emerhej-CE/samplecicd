@@ -1,4 +1,4 @@
-# Apply on push. The apply job uses GitHub Environment: preprod (preprod branch) or prod (production) for required reviewers.
+# Apply on push. Manual approval runs once via environment on job "Manual approval"; matrix apply runs after approval without per-module gates.
 #   Roles: PREPROD_AWS_ROLE_ARN for dev/qa, PROD_AWS_ROLE_ARN for prod. Variables: AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
 name: Terragrunt Apply
 
@@ -192,11 +192,18 @@ jobs:
               f.write("EOF\n")
           PY
 
+  approval:
+    name: Manual approval
+    runs-on: ubuntu-latest
+    needs: [discover]
+    environment: ${{ github.ref_name == 'production' && 'prod' || 'preprod' }}
+    steps:
+      - run: echo "Deployment approved"
+
   apply:
     name: Apply ${{ matrix.module }}
-    needs: [discover]
+    needs: [discover, approval]
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'production' && 'prod' || 'preprod' }}
     strategy:
       fail-fast: false
       max-parallel: 1
