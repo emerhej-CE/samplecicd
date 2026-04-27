@@ -1,19 +1,14 @@
-# Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
-#   workflow_dispatch.stack_path (required choice). TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
-#   Run from branch preprod or production; path must match branch (see discover validation).
+# Terragrunt destroy — repo Variables: QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
+#   workflow_dispatch: confirm_destroy must be DESTROY. preprod → live/qa/us-east-1, production → live/prod/us-east-1. TG_VERSION optional.
 name: Terragrunt Destroy
 
 on:
   workflow_dispatch:
     inputs:
-      stack_path:
-        description: "Stack root to destroy: live/dev/us-east-1, live/qa/us-east-1, or live/prod/us-east-1"
+      confirm_destroy:
+        description: "Type DESTROY to confirm"
         required: true
-        type: choice
-        options:
-          - live/dev/us-east-1
-          - live/qa/us-east-1
-          - live/prod/us-east-1
+        type: string
 
 permissions:
   contents: read
@@ -26,64 +21,42 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       live_env: ${{ steps.set.outputs.live_env }}
+      stack_path: ${{ steps.set.outputs.stack_path }}
     steps:
       - uses: actions/checkout@v4
       - id: set
         env:
           TG_MODE: destroy
-          STACK_PATH: ${{ github.event.inputs.stack_path }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "::error::confirm_destroy must be exactly DESTROY (case-sensitive)"
+            exit 1
+          fi
           FULL=$(python3 <<'PY'
           import glob
           import json
           import os
-          import re
           import sys
           from collections import defaultdict, deque
 
-          BASE = (os.environ.get("STACK_PATH") or "").strip()
           REF = (os.environ.get("GITHUB_REF_NAME") or "").strip()
           MODE = os.environ.get("TG_MODE", "apply")
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
-          if not BASE:
-              print("error: stack_path is required", file=sys.stderr)
-              sys.exit(1)
-          if not BASE.startswith("live/"):
-              print(f"error: stack_path must start with live/, got {BASE!r}", file=sys.stderr)
-              sys.exit(1)
-          parts = BASE.strip("/").split("/")
-          if len(parts) != 3:
-              print(f"error: stack_path must be live/<env>/<region>, got {BASE!r}", file=sys.stderr)
-              sys.exit(1)
-          env_part, region_part = parts[1], parts[2]
-          if env_part not in ("dev", "qa", "prod"):
-              print(f"error: env must be dev, qa, or prod, got {env_part!r}", file=sys.stderr)
-              sys.exit(1)
-          if not re.fullmatch(r"[a-z0-9-]+", region_part):
-              print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
-              sys.exit(1)
-          if REF not in ("preprod", "production"):
+          if REF == "production":
+              BASE = "live/prod/us-east-1"
+              live_env = "prod"
+          elif REF == "preprod":
+              BASE = "live/qa/us-east-1"
+              live_env = "qa"
+          else:
               print(
-                  f"error: run this workflow from branch preprod or production (got {REF!r})",
+                  f"error: run this workflow from branch preprod or production only (got {REF!r})",
                   file=sys.stderr,
               )
               sys.exit(1)
-          if REF == "production" and BASE != "live/prod/us-east-1":
-              print(
-                  f"error: on production branch only live/prod/us-east-1 is allowed, got {BASE!r}",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          if REF == "preprod" and BASE not in ("live/dev/us-east-1", "live/qa/us-east-1"):
-              print(
-                  f"error: on preprod branch only live/dev/us-east-1 or live/qa/us-east-1, got {BASE!r}",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          live_env = env_part
 
           def module_names():
               paths = glob.glob(os.path.join(BASE, "*", "terragrunt.hcl"))
@@ -130,17 +103,20 @@ jobs:
           obj = {
               "matrix": [{"module": m} for m in order],
               "live_env": live_env,
+              "stack_path": BASE,
           }
           print(json.dumps(obj))
           PY
           )
           MATRIX=$(echo "$FULL" | jq -c '.matrix')
           LIVE_ENV=$(echo "$FULL" | jq -r '.live_env')
+          STACK_PATH=$(echo "$FULL" | jq -r '.stack_path')
           echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "live_env=$LIVE_ENV" >> "$GITHUB_OUTPUT"
-          echo "matrix=$MATRIX live_env=$LIVE_ENV"
+          echo "stack_path=$STACK_PATH" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK_PATH"
 
   destroy:
     name: Destroy ${{ matrix.module }}
@@ -153,12 +129,12 @@ jobs:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
-        working-directory: ${{ github.event.inputs.stack_path }}/${{ matrix.module }}
+        working-directory: ${{ needs.discover.outputs.stack_path }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.discover.outputs.live_env == 'dev' && vars.DEV_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'qa' && vars.QA_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'prod' && vars.PROD_AWS_ROLE_ARN || '' }}
+          role-to-assume: ${{ needs.discover.outputs.live_env == 'qa' && vars.QA_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'prod' && vars.PROD_AWS_ROLE_ARN || '' }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
         with:
