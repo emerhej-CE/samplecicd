@@ -1,4 +1,4 @@
-# Apply on push. Manual approval runs once via environment on job "Manual approval"; matrix apply runs after approval without per-module gates.
+# Apply on push. Review before apply uses GitHub Environment preprod or production; matrix apply runs after without per-module gates.
 #   Roles by live/* folder: vars.DEV_AWS_ROLE_ARN, vars.QA_AWS_ROLE_ARN, vars.PROD_AWS_ROLE_ARN. Also: AWS_REGION, TG_VERSION (opt), TG_STACKS_DIR (opt)
 name: Terragrunt Apply
 
@@ -193,10 +193,10 @@ jobs:
           PY
 
   approval:
-    name: Manual approval
+    name: Review before apply
     runs-on: ubuntu-latest
     needs: [discover]
-    environment: ${{ github.ref_name == 'production' && 'prod' || 'preprod' }}
+    environment: ${{ needs.discover.outputs.live_env == 'prod' && 'production' || 'preprod' }}
     steps:
       - run: echo "Deployment approved"
 
