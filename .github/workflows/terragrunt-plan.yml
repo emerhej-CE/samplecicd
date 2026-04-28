@@ -288,8 +288,8 @@ jobs:
         if: always()
         run: |
           pwd
-          find scripts/plan -maxdepth 3 -type f -print || true
-          find scripts/plan -maxdepth 3 -type d -print || true
+          echo "Generated scripts/plan content:"
+          find scripts/plan -maxdepth 4 -print || true
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
@@ -297,7 +297,7 @@ jobs:
         with:
           name: terragrunt-plan-${{ needs.discover.outputs.live_env }}
           path: |
+            scripts/plan/tg2md-plan-logs/**
+            scripts/plan/unfiltered-plan-output/**
             scripts/plan/all-plans.md
-            scripts/plan/*.log
-            scripts/plan/*.md
           if-no-files-found: warn
