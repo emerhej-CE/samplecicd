@@ -273,23 +273,46 @@ jobs:
         env:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
         run: |
-          set -euo pipefail
+          set -u
+          aws sts get-caller-identity
           case "${LIVE_ENV}" in
-            dev)  make plan dev ;;
-            qa)   make plan qa ;;
-            prod) make plan prod ;;
+            dev|qa|prod) ;;
             *)
               echo "Unsupported live_env: ${LIVE_ENV}"
               exit 1
               ;;
           esac
-
-      - name: Show generated plan files
-        if: always()
-        run: |
-          pwd
-          echo "Generated scripts/plan content:"
+          set -o pipefail
+          set +e
+          case "${LIVE_ENV}" in
+            dev)  make plan dev  2>&1 | tee make-plan-output.log ;;
+            qa)   make plan qa   2>&1 | tee make-plan-output.log ;;
+            prod) make plan prod 2>&1 | tee make-plan-output.log ;;
+          esac
+          MAKE_EXIT=$?
+          set +e
+          echo ""
+          echo "=== make-plan-output.log ==="
+          cat make-plan-output.log || true
+          echo ""
+          echo "=== scripts/plan/*.log ==="
+          if compgen -G "scripts/plan/*.log" > /dev/null 2>&1; then
+            cat scripts/plan/*.log
+          else
+            echo "(no scripts/plan/*.log files)"
+          fi
+          echo ""
+          echo "=== find scripts (maxdepth 5, files) ==="
+          find scripts -maxdepth 5 -type f -print || true
+          echo ""
+          echo "=== Generated scripts/plan tree ==="
           find scripts/plan -maxdepth 4 -print || true
+          if grep -Fq "Stacks planned: 0" make-plan-output.log 2>/dev/null \
+            || grep -Fq "skip (no plan file)" make-plan-output.log 2>/dev/null; then
+            echo "::error::make plan skipped modules or planned zero stacks (look for 'Stacks planned: 0' or 'skip (no plan file)' in make-plan-output.log; artifact includes that file)."
+            exit 1
+          fi
+          exit "$MAKE_EXIT"
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
@@ -297,6 +320,7 @@ jobs:
         with:
           name: terragrunt-plan-${{ needs.discover.outputs.live_env }}
           path: |
+            make-plan-output.log
             scripts/plan/tg2md-plan-logs/**
             scripts/plan/unfiltered-plan-output/**
             scripts/plan/all-plans.md
