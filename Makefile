@@ -92,8 +92,8 @@ plan: ## Plan environment (usage: make plan qa|dev|prod [detailed])
 	if [ ! -d "$$REGION_ROOT" ]; then echo "Error: $$REGION_ROOT not found."; exit 1; fi; \
 	mkdir -p "$$LOGS_PLAN" "$$UNFILTERED_DIR" "$$TG2MD_ROOT/$$ENV" "$$REPO_ROOT/scripts/plan"; \
 	echo "Action:  plan"; echo "Environment: $$ENV"; \
-	echo "==> Capturing terragrunt run --all plan (unfiltered)..."; \
-	(cd "$$REGION_ROOT" && terragrunt run --all plan 2>&1) | tee "$$UNFILTERED_DIR/$$ENV-plan.log"; \
+	echo "==> Capturing terragrunt run-all plan (unfiltered)..."; \
+	(cd "$$REGION_ROOT" && terragrunt run-all plan 2>&1) | tee "$$UNFILTERED_DIR/$$ENV-plan.log"; \
 	echo ""; \
 	STACK_CNT=0; \
 	for stack_dir in $$(find "$$LIVE/$$ENV" -name "terragrunt.hcl" -type f ! -path "*/.terragrunt-cache/*" | sed 's|/terragrunt.hcl||' | sort); do \
