@@ -80,13 +80,14 @@ _init-modules: ## Internal target to initialize Terraform modules for specific e
 	@echo "✅ Module initialization completed for $(ENV) environment"
 
 
-# Planning targets — scripts/plan/tg2md-plan-logs/, scripts/plan/unfiltered-plan-output/, scripts/plan/all-plans.md
-plan: ## Plan environment (usage: make plan qa|dev|prod [detailed])
+# Planning targets — scripts/plan/tg2md-plan-logs/ (tfplan2md+glow), scripts/plan/unfiltered-plan-output/ (run-all raw), scripts/plan/all-plans.md
+plan: ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	@args="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if echo "$$args" | grep -q "qa"; then ENV=qa; \
 	elif echo "$$args" | grep -q "dev"; then ENV=dev; \
 	elif echo "$$args" | grep -q "prod"; then ENV=prod; \
-	else echo "Usage: make plan qa|dev|prod [detailed]"; exit 1; fi; \
+	elif echo "$$args" | grep -q "production"; then ENV=prod; \
+	else echo "Usage: make plan qa|dev|prod|production [detailed]"; exit 1; fi; \
 	REPO_ROOT="$(CURDIR)"; \
 	rm -rf "$$REPO_ROOT/scripts/plan" "$$REPO_ROOT/scripts/plan-artifacts"; \
 	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan-logs" "$$REPO_ROOT/scripts/plan/unfiltered-plan-output"; \
