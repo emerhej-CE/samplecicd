@@ -35,8 +35,7 @@ jobs:
     env:
       # Repo override, event SHAs, and default for modules/ / unmapped diffs (no live/<env>/<region> in paths)
       REPO_TG_STACKS: ${{ vars.TG_STACKS_DIR }}
-      # When the workflow runs for production (push or PR → production), default stack root is prod; otherwise qa (preprod).
-      DEFAULT_TG_ROOT: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'production') || (github.event_name == 'push' && github.ref_name == 'production')) && 'live/prod/us-east-1' || 'live/qa/us-east-1' }}
+      DEFAULT_TG_ROOT: "live/qa/us-east-1"
       GITHUB_EVENT_NAME: ${{ github.event_name }}
       PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
       PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
@@ -284,30 +283,6 @@ jobs:
               exit 1
               ;;
           esac
-
-      # Makefile may write flat files under scripts/plan/ (all-plans.md, *.log) or nested tg2md-plan-logs/ + unfiltered-plan-output/.
-      # Mirror flat outputs into the nested paths so prod (and all envs) upload the same artifact layout.
-      - name: Normalize scripts/plan for artifact paths
-        if: always()
-        run: |
-          set +e
-          mkdir -p scripts/plan/tg2md-plan-logs scripts/plan/unfiltered-plan-output
-          if [ -f scripts/plan/all-plans.md ]; then
-            cp -f scripts/plan/all-plans.md scripts/plan/tg2md-plan-logs/all-plans.md
-          fi
-          if ! ls scripts/plan/tg2md-plan-logs/*.log >/dev/null 2>&1; then
-            for f in scripts/plan/*.log; do
-              [ -f "$f" ] && cp -f "$f" scripts/plan/tg2md-plan-logs/
-            done
-          fi
-          for f in scripts/plan/*-plan.log; do
-            if [ -f "$f" ]; then
-              base=$(basename "$f")
-              dest="scripts/plan/unfiltered-plan-output/$base"
-              [ ! -f "$dest" ] && cp -f "$f" "$dest"
-            fi
-          done
-          set -e
 
       - name: Show generated plan files
         if: always()
