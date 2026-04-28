@@ -269,6 +269,18 @@ jobs:
           sudo install -m 0755 /tmp/tfplan2md /usr/local/bin/tfplan2md
           tfplan2md --help | head -n 5
 
+      # Prod only: surface raw terragrunt errors before Makefile redirects/hides them.
+      - name: Prod direct terragrunt diagnostics (lambda-hello, s3)
+        if: needs.discover.outputs.live_env == 'prod'
+        run: |
+          set -euo pipefail
+          cd live/prod/us-east-1/lambda-hello
+          terragrunt init -input=false --terragrunt-non-interactive
+          terragrunt plan -input=false -no-color --terragrunt-non-interactive
+          cd ../s3
+          terragrunt init -input=false --terragrunt-non-interactive
+          terragrunt plan -input=false -no-color --terragrunt-non-interactive
+
       - name: Run Makefile plan (debug)
         env:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
@@ -289,11 +301,6 @@ jobs:
         run: |
           echo "==== FULL MAKE OUTPUT ===="
           cat make-plan-output.log || true
-
-      - name: Print all *.log files under workspace
-        if: always()
-        run: |
-          find . -name "*.log" -exec cat {} \; || true
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
