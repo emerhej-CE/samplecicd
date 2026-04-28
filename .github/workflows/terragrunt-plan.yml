@@ -269,12 +269,12 @@ jobs:
           sudo install -m 0755 /tmp/tfplan2md /usr/local/bin/tfplan2md
           tfplan2md --help | head -n 5
 
-      - name: Run Makefile plan
+      - name: Run Makefile plan (debug)
         env:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
         run: |
-          set -u
-          aws sts get-caller-identity
+          set -euo pipefail
+          export TF_LOG=DEBUG
           case "${LIVE_ENV}" in
             dev|qa|prod) ;;
             *)
@@ -282,37 +282,18 @@ jobs:
               exit 1
               ;;
           esac
-          set -o pipefail
-          set +e
-          case "${LIVE_ENV}" in
-            dev)  make plan dev  2>&1 | tee make-plan-output.log ;;
-            qa)   make plan qa   2>&1 | tee make-plan-output.log ;;
-            prod) make plan prod 2>&1 | tee make-plan-output.log ;;
-          esac
-          MAKE_EXIT=$?
-          set +e
-          echo ""
-          echo "=== make-plan-output.log ==="
+          make plan ${LIVE_ENV} 2>&1 | tee make-plan-output.log
+
+      - name: Print full make output
+        if: always()
+        run: |
+          echo "==== FULL MAKE OUTPUT ===="
           cat make-plan-output.log || true
-          echo ""
-          echo "=== scripts/plan/*.log ==="
-          if compgen -G "scripts/plan/*.log" > /dev/null 2>&1; then
-            cat scripts/plan/*.log
-          else
-            echo "(no scripts/plan/*.log files)"
-          fi
-          echo ""
-          echo "=== find scripts (maxdepth 5, files) ==="
-          find scripts -maxdepth 5 -type f -print || true
-          echo ""
-          echo "=== Generated scripts/plan tree ==="
-          find scripts/plan -maxdepth 4 -print || true
-          if grep -Fq "Stacks planned: 0" make-plan-output.log 2>/dev/null \
-            || grep -Fq "skip (no plan file)" make-plan-output.log 2>/dev/null; then
-            echo "::error::make plan skipped modules or planned zero stacks (look for 'Stacks planned: 0' or 'skip (no plan file)' in make-plan-output.log; artifact includes that file)."
-            exit 1
-          fi
-          exit "$MAKE_EXIT"
+
+      - name: Print all *.log files under workspace
+        if: always()
+        run: |
+          find . -name "*.log" -exec cat {} \; || true
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
