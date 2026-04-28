@@ -274,13 +274,6 @@ jobs:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
         run: |
           set -euo pipefail
-          case "${LIVE_ENV}" in
-            dev|qa|prod) ;;
-            *)
-              echo "Unsupported live_env: ${LIVE_ENV}"
-              exit 1
-              ;;
-          esac
           make plan ${LIVE_ENV} 2>&1 | tee make-plan-output.log
 
       - name: Print full make output
