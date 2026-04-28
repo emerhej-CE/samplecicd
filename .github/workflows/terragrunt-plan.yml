@@ -274,22 +274,13 @@ jobs:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
         run: |
           set -euo pipefail
-          case "${LIVE_ENV}" in
-            dev)  make plan dev ;;
-            qa)   make plan qa ;;
-            prod) make plan prod ;;
-            *)
-              echo "Unsupported live_env: ${LIVE_ENV}"
-              exit 1
-              ;;
-          esac
+          make plan ${LIVE_ENV} 2>&1 | tee make-plan-output.log
 
-      - name: Show generated plan files
+      - name: Print full make output
         if: always()
         run: |
-          pwd
-          echo "Generated scripts/plan content:"
-          find scripts/plan -maxdepth 4 -print || true
+          echo "==== FULL MAKE OUTPUT ===="
+          cat make-plan-output.log || true
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
@@ -297,6 +288,7 @@ jobs:
         with:
           name: terragrunt-plan-${{ needs.discover.outputs.live_env }}
           path: |
+            make-plan-output.log
             scripts/plan/tg2md-plan-logs/**
             scripts/plan/unfiltered-plan-output/**
             scripts/plan/all-plans.md
