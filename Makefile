@@ -80,17 +80,24 @@ _init-modules: ## Internal target to initialize Terraform modules for specific e
 	@echo "✅ Module initialization completed for $(ENV) environment"
 
 
-# Planning targets (tg2md: terragrunt plan per stack, tfplan2md + glow, output in scripts/plan)
+# Planning targets — scripts/plan/tg2md-plan-logs/, scripts/plan/unfiltered-plan-output/, scripts/plan/all-plans.md
 plan: ## Plan environment (usage: make plan qa|dev|prod [detailed])
 	@args="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if echo "$$args" | grep -q "qa"; then ENV=qa; \
 	elif echo "$$args" | grep -q "dev"; then ENV=dev; \
 	elif echo "$$args" | grep -q "prod"; then ENV=prod; \
 	else echo "Usage: make plan qa|dev|prod [detailed]"; exit 1; fi; \
-	REPO_ROOT="$(CURDIR)"; LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; \
-	if [ ! -d "$$LIVE/$$ENV" ]; then echo "Error: live/$$ENV not found."; exit 1; fi; \
-	mkdir -p "$$LOGS_PLAN" "$$TG2MD_ROOT/$$ENV"; \
+	REPO_ROOT="$(CURDIR)"; \
+	rm -rf "$$REPO_ROOT/scripts/plan" "$$REPO_ROOT/scripts/plan-artifacts"; \
+	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan-logs" "$$REPO_ROOT/scripts/plan/unfiltered-plan-output"; \
+	LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan/tg2md-plan-logs"; UNFILTERED_DIR="$$REPO_ROOT/scripts/plan/unfiltered-plan-output"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; \
+	REGION_ROOT="$$LIVE/$$ENV/us-east-1"; \
+	if [ ! -d "$$REGION_ROOT" ]; then echo "Error: $$REGION_ROOT not found."; exit 1; fi; \
+	mkdir -p "$$TG2MD_ROOT/$$ENV"; \
 	echo "Action:  plan"; echo "Environment: $$ENV"; \
+	echo "==> terragrunt run-all plan (unfiltered) -> $$UNFILTERED_DIR/$$ENV-plan.log"; \
+	(cd "$$REGION_ROOT" && terragrunt run-all plan 2>&1) | tee "$$UNFILTERED_DIR/$$ENV-plan.log"; \
+	echo ""; \
 	STACK_CNT=0; \
 	for stack_dir in $$(find "$$LIVE/$$ENV" -name "terragrunt.hcl" -type f ! -path "*/.terragrunt-cache/*" | sed 's|/terragrunt.hcl||' | sort); do \
 	  rel=$$(echo "$$stack_dir" | sed "s|$$LIVE/||"); \
@@ -120,12 +127,13 @@ plan: ## Plan environment (usage: make plan qa|dev|prod [detailed])
 	  sed -E 's/^[[:space:]]*[A-Za-z0-9+/=]{200,}$$/  (omitted)/g' "$$f" 2>/dev/null >> "$$ALL_PLANS" || cat "$$f" >> "$$ALL_PLANS"; echo "" >> "$$ALL_PLANS"; echo "---" >> "$$ALL_PLANS"; echo "" >> "$$ALL_PLANS"; \
 	done; \
 	if command -v glow >/dev/null 2>&1; then glow "$$ALL_PLANS" > "$$LOGS_PLAN/all-plans.md" 2>/dev/null || cp "$$ALL_PLANS" "$$LOGS_PLAN/all-plans.md"; else cp "$$ALL_PLANS" "$$LOGS_PLAN/all-plans.md" 2>/dev/null || true; fi; \
+	cp -f "$$LOGS_PLAN/all-plans.md" "$$REPO_ROOT/scripts/plan/all-plans.md" 2>/dev/null || true; \
 	for f in $$(find "$$TG2MD_ROOT/$$ENV" -name "plan.md" -type f 2>/dev/null | sort); do \
 	  rel=$$(echo "$$f" | sed "s|$$TG2MD_ROOT/$$ENV/||" | sed 's|/plan.md||'); slug=$$(echo "$$rel" | tr '/' '-'); \
 	  if command -v glow >/dev/null 2>&1; then glow "$$f" > "$$LOGS_PLAN/$$slug.log" 2>/dev/null || cp "$$f" "$$LOGS_PLAN/$$slug.log"; else cp "$$f" "$$LOGS_PLAN/$$slug.log"; fi; echo "Log: $$LOGS_PLAN/$$slug.log"; \
 	done; \
-	echo "Done. Combined plan: $$LOGS_PLAN/all-plans.md"; echo "View: glow $$LOGS_PLAN/all-plans.md"; \
-	rm -rf "$$TG2MD_ROOT"; echo "Cleaned up plan-artifacts (kept scripts/plan/ only)."
+	echo "Done. Combined plan: $$LOGS_PLAN/all-plans.md (copy: $$REPO_ROOT/scripts/plan/all-plans.md)"; echo "View: glow $$LOGS_PLAN/all-plans.md"; \
+	rm -rf "$$TG2MD_ROOT"; echo "Cleaned up scripts/plan-artifacts (outputs under scripts/plan/ are fresh for this env)."
 
 fix-providers: ## chmod +x all terraform-provider-* (fixes permission denied after S3 restore)
 	@chmod +x ./scripts/fix-terraform-provider-perms.sh 2>/dev/null || true
