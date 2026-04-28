@@ -2,6 +2,7 @@
 #   DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
 #   TG_STACKS_DIR (optional) — if set, used as the stack root and skips auto-detection from the git diff
 #   TG_VERSION (optional) — default 0.67.16
+#   TFPLAN2MD_VERSION (optional) — default 1.42.0 (Linux x64 tarball from oocx/tfplan2md releases)
 # Stack root is auto-detected from changed paths under live/<env>/<region> (see discover job),
 #   except: modules/** or no live root in diff → default live/qa/us-east-1. preprod: live/dev, live/qa; production: live/prod
 name: Terragrunt Plan
@@ -40,6 +41,8 @@ jobs:
       PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
       PUSH_BEFORE: ${{ github.event.before }}
       PUSH_AFTER: ${{ github.event.after || github.sha }}
+      # Target branch for PRs (preprod/production); ref for pushes — used for env/branch policy
+      WORKFLOW_REF_NAME: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       tg_stacks_dir_dynamic: ${{ steps.set.outputs.tg_stacks_dir_dynamic }}
@@ -67,6 +70,7 @@ jobs:
           override = (os.environ.get("REPO_TG_STACKS") or "").strip()
           if override:
               base = override
+              inferred_from_default = False
           else:
               def is_aws_region_segment(s: str) -> bool:
                   if s in ("config", "live", "modules"):
@@ -130,9 +134,11 @@ jobs:
                   sys.exit(1)
               if len(all_roots) == 1:
                   base = next(iter(all_roots))
+                  inferred_from_default = False
               else:
                   # Only modules, workflow, or unmapped live/qa files → default
                   base = DEFAULT_BASE
+                  inferred_from_default = len(all_roots) == 0
 
           if not base:
               print("error: empty stacks root", file=sys.stderr)
@@ -142,6 +148,25 @@ jobs:
               print("error: could not derive live env from base", file=sys.stderr)
               sys.exit(1)
           live_env = pbase[1]
+          ref = (os.environ.get("WORKFLOW_REF_NAME") or "").strip()
+          if (not override) and ref == "production" and inferred_from_default:
+              print(
+                  "error: production plan needs a change under live/prod/ in the diff, or set TG_STACKS_DIR",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "preprod" and live_env not in ("dev", "qa"):
+              print(
+                  f"error: preprod only supports live/dev/ or live/qa/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if ref == "production" and live_env != "prod":
+              print(
+                  f"error: production only supports live/prod/; got {base} (env={live_env})",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
           # --- build matrix (unchanged) ---
           MODE = os.environ.get("TG_MODE", "apply")
           BASE = base
@@ -202,26 +227,21 @@ jobs:
           PY
 
   plan:
-    name: Plan ${{ matrix.module }}
+    name: Plan (Makefile)
     needs: [discover]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        include: ${{ fromJson(needs.discover.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ needs.discover.outputs.tg_stacks_dir_dynamic }}/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ needs.discover.outputs.live_env == 'dev' && vars.DEV_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'qa' && vars.QA_AWS_ROLE_ARN || needs.discover.outputs.live_env == 'prod' && vars.PROD_AWS_ROLE_ARN || '' }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
+
       - name: Install Terragrunt
         env:
           TG_VERSION_INPUT: ${{ vars.TG_VERSION }}
@@ -231,7 +251,45 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
-      - run: terragrunt hclfmt --check
-      - run: terragrunt init -input=false --terragrunt-non-interactive
-      - run: terragrunt validate --terragrunt-non-interactive
-      - run: terragrunt plan -input=false -no-color --terragrunt-non-interactive
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y jq
+
+      - name: Install tfplan2md
+        env:
+          TFPLAN2MD_VERSION_INPUT: ${{ vars.TFPLAN2MD_VERSION }}
+        run: |
+          set -euo pipefail
+          VERSION="${TFPLAN2MD_VERSION_INPUT:-1.42.0}"
+          TGZ="tfplan2md_${VERSION}_linux-x64.tar.gz"
+          wget -q -O "/tmp/${TGZ}" "https://github.com/oocx/tfplan2md/releases/download/v${VERSION}/${TGZ}"
+          tar -xzf "/tmp/${TGZ}" -C /tmp
+          sudo install -m 0755 /tmp/tfplan2md /usr/local/bin/tfplan2md
+          tfplan2md --help | head -n 5
+
+      - name: Run Makefile plan
+        env:
+          LIVE_ENV: ${{ needs.discover.outputs.live_env }}
+        run: |
+          set -euo pipefail
+          case "${LIVE_ENV}" in
+            dev)  make plan dev ;;
+            qa)   make plan qa ;;
+            prod) make plan prod ;;
+            *)
+              echo "Unsupported live_env: ${LIVE_ENV}"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload plan outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terragrunt-plan-${{ needs.discover.outputs.live_env }}
+          path: |
+            scripts/plan/tg2md-plan-logs
+            scripts/plan/unfiltered-plan-output
+          if-no-files-found: warn
