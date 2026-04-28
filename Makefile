@@ -101,15 +101,29 @@ plan: ## Plan environment (usage: make plan qa|dev|prod [detailed])
 	STACK_CNT=0; \
 	for stack_dir in $$(find "$$LIVE/$$ENV" -name "terragrunt.hcl" -type f ! -path "*/.terragrunt-cache/*" | sed 's|/terragrunt.hcl||' | sort); do \
 	  rel=$$(echo "$$stack_dir" | sed "s|$$LIVE/||"); \
-	  out_dir="$$TG2MD_ROOT/$$rel"; plan_tfplan="$$out_dir/plan.tfplan"; plan_json="$$out_dir/plan.json"; plan_fixed="$$out_dir/plan.tfplan2md.json"; plan_md="$$out_dir/plan.md"; \
+	  out_dir="$$TG2MD_ROOT/$$rel"; plan_tfplan="$$out_dir/plan.tfplan"; plan_json="$$out_dir/plan.json"; plan_fixed="$$out_dir/plan.tfplan2md.json"; plan_md="$$out_dir/plan.md"; module_log="$$out_dir/terragrunt-plan.log"; \
 	  mkdir -p "$$out_dir"; echo "==> $$rel (plan)"; \
-	  echo "    running terragrunt plan..."; \
-	  attempt=1; while true; do (cd "$$stack_dir" && TG_LOG= terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false >/dev/null 2>&1) && break; \
-	    [ $$attempt -ge 3 ] && break; echo "    retry $$((attempt+1))/3..."; attempt=$$((attempt+1)); done; \
-	  if [ ! -f "$$plan_tfplan" ]; then echo "    skip (no plan file)"; continue; fi; \
+	  echo "    running terragrunt plan (log: $$module_log)..."; \
+	  (cd "$$stack_dir" && TG_LOG= terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false) > "$$module_log" 2>&1; plan_rc=$$?; \
+	  if [ $$plan_rc -ne 0 ] || [ ! -f "$$plan_tfplan" ]; then \
+	    echo ""; echo "ERROR: terragrunt plan failed (exit $$plan_rc) or plan.tfplan missing."; \
+	    echo "Module path: $$stack_dir"; \
+	    echo "Terragrunt command: cd $$stack_dir && TG_LOG= terragrunt plan -lock=false -out=$$plan_tfplan -- -input=false"; \
+	    echo "Output directory ($$out_dir):"; ls -lah "$$out_dir" 2>&1 || true; \
+	    echo "Module log ($$module_log):"; cat "$$module_log" 2>&1 || true; \
+	    exit 1; \
+	  fi; \
 	  echo "    converting to markdown..."; \
-	  (cd "$$stack_dir" && TG_LOG= terragrunt show -json "$$plan_tfplan" > "$$plan_json" 2>/dev/null) || true; \
-	  if [ ! -s "$$plan_json" ]; then echo "    skip (no plan JSON)"; continue; fi; \
+	  (cd "$$stack_dir" && TG_LOG= terragrunt show -json "$$plan_tfplan" > "$$plan_json" 2>&1); show_rc=$$?; \
+	  if [ $$show_rc -ne 0 ] || [ ! -s "$$plan_json" ]; then \
+	    echo ""; echo "ERROR: terragrunt show -json failed or produced empty $$plan_json."; \
+	    echo "Module path: $$stack_dir"; \
+	    echo "Terragrunt command: cd $$stack_dir && TG_LOG= terragrunt show -json $$plan_tfplan"; \
+	    echo "Output directory ($$out_dir):"; ls -lah "$$out_dir" 2>&1 || true; \
+	    echo "Module log ($$module_log):"; cat "$$module_log" 2>&1 || true; \
+	    echo "plan.json (stderr/JSON from show):"; cat "$$plan_json" 2>&1 || true; \
+	    exit 1; \
+	  fi; \
 	  if command -v jq >/dev/null 2>&1; then \
 	    jq 'if .resource_changes == null then . + {"resource_changes": []} else . end' "$$plan_json" > "$$plan_fixed" 2>/dev/null || cp "$$plan_json" "$$plan_fixed"; \
 	  else cp "$$plan_json" "$$plan_fixed"; fi; \
