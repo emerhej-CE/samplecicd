@@ -1,5 +1,5 @@
 ############################################################
-# SSM Parameter Store (QA) — two String params
+# SSM Parameter Store (dev) — two String params (same module as QA)
 ############################################################
 
 include "root" {
@@ -20,9 +20,8 @@ terraform {
 inputs = {
   environment = local.environment
   project     = local.project
-  # AWS PutParameter rejects empty string; override in CI/locals if needed
-  value_a = "placeholder"
-  value_b = "placeholder"
+  value_a     = "placeholder"
+  value_b     = "placeholder"
   common_tags = merge(
     local.global_config.global,
     local.global_config.global_tags,

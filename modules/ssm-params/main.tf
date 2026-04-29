@@ -1,6 +1,6 @@
 resource "aws_ssm_parameter" "a" {
   name        = "/${var.project}/${var.environment}/ssm-params/param-a"
-  description = "QA incremental-apply test parameter A"
+  description = "Sample SSM parameter A (ssm-params stack)"
   type        = "String"
   value       = var.value_a
 
@@ -9,7 +9,7 @@ resource "aws_ssm_parameter" "a" {
 
 resource "aws_ssm_parameter" "b" {
   name        = "/${var.project}/${var.environment}/ssm-params/param-b"
-  description = "QA incremental-apply test parameter B"
+  description = "Sample SSM parameter B (ssm-params stack)"
   type        = "String"
   value       = var.value_b
 
