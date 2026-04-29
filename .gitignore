@@ -7,6 +7,5 @@ testkey
 *.tfstate
 *.tfstate.*
 crash.*.log
-scripts/plan/*.log
-scripts/plan/*.md
-scripts/plan/terragrunt-logs/
+scripts/plan/tg2md-plan/
+scripts/plan/unfiltered-plan/
