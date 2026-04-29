@@ -300,15 +300,22 @@ jobs:
           echo "=== tail make-plan-output.log (last 80 lines) ==="
           tail -n 80 make-plan-output.log 2>/dev/null || true
 
+      - name: Stage plan/ for artifact (zip root = plan/, not scripts/plan/)
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf plan
+          if [ -d scripts/plan ]; then cp -a scripts/plan plan; fi
+
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
         if: always()
         with:
           # PR: name by target branch (preprod|production); push: branch pushed
-          # Zip contains repo-relative paths; full tree under scripts/plan/ + make log at repo root.
+          # Zip layout: plan/<tg2md-plan|unfiltered-plan>/… + make-plan-output.log (Makefile still writes scripts/plan/)
           name: terragrunt-plan-${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}-${{ needs.discover.outputs.live_env }}
           path: |
             make-plan-output.log
-            scripts/plan
+            plan
           if-no-files-found: warn
           retention-days: 30
