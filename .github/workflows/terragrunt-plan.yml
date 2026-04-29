@@ -7,7 +7,7 @@
 #   preprod branch: only live/dev/** or live/qa/** (change under live/dev → make plan dev; live/qa → make plan qa).
 #   production branch: only live/prod/** → make plan prod.
 #   modules/** or no live path in diff → default live/qa/us-east-1 on preprod; on production you must touch live/prod or set TG_STACKS_DIR.
-# Artifacts: make-plan-output.log; scripts/plan/** (tg2md-plan/*.md, tg2md-plan/*.log, unfiltered-plan/all-plans.md raw run-all).
+# Artifacts: make-plan-output.log; scripts/plan/** (tg2md-plan/*.md, unfiltered-plan/all-plans.md = concatenated per-stack plans).
 name: Terragrunt Plan
 
 on:
@@ -276,7 +276,7 @@ jobs:
       - name: Run Makefile plan
         env:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
-          # Verbose logs for troubleshooting (see scripts/plan/tg2md-plan/*.log in artifact)
+          # Verbose logs for troubleshooting (see make-plan-output.log and unfiltered-plan/all-plans.md in artifact)
           TG_LOG: DEBUG
           TF_LOG: INFO
           # Do not set TF_CLI_ARGS_plan here — it merged badly with terragrunt passthrough on TF 1.14+
@@ -297,13 +297,8 @@ jobs:
         run: |
           echo "=== Makefile artifacts under scripts/plan ==="
           ls -laR scripts/plan 2>/dev/null || echo "(scripts/plan missing or empty)"
-          echo "=== per-stack terragrunt plan logs (tg2md-plan/*.log) ==="
-          ls -la scripts/plan/tg2md-plan/*.log 2>/dev/null || echo "(no *.log in tg2md-plan)"
-          shopt -s nullglob || true
-          for logfile in scripts/plan/tg2md-plan/*.log; do
-            echo "--- tail ${logfile} ---"
-            tail -n 30 "${logfile}"
-          done || true
+          echo "=== tail make-plan-output.log (last 80 lines) ==="
+          tail -n 80 make-plan-output.log 2>/dev/null || true
 
       - name: Upload plan outputs
         uses: actions/upload-artifact@v4
