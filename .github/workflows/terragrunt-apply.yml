@@ -205,6 +205,10 @@ jobs:
     name: Apply ${{ matrix.module }}
     needs: [discover, review-before-apply]
     runs-on: ubuntu-latest
+    # Avoid ANSI (\\x1b) in subprocess output — Terragrunt parses dependency outputs as JSON; colors break cloudfront → s3 dependency reads.
+    env:
+      NO_COLOR: "1"
+      TF_IN_AUTOMATION: "1"
     strategy:
       fail-fast: false
       max-parallel: 1
