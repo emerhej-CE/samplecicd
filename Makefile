@@ -1,5 +1,10 @@
 # Makefile for valpay-aws-terraform
-.PHONY: help validate plan apply destroy clean fmt lint docs compare create-backend init _init-modules fix-providers
+.PHONY: help validate plan apply destroy clean fmt lint docs compare create-backend init _init-modules fix-providers _ensure-tfplan2md install-tfplan2md
+
+# Pin with CI (.github/workflows/terragrunt-plan.yml TFPLAN2MD_VERSION)
+TFPLAN2MD_VERSION ?= 1.42.0
+# tfplan2md: github target still injects AZDO-style <details style="...">; bitbucket is markdown-only (no palette CSS)
+TFPLAN2MD_RENDER_TARGET ?= bitbucket
 
 
 # Default target
@@ -8,6 +13,7 @@ help: ## Show this help message
 	@echo "  make create-backend <env> - Create backend resources (qa, dev, prod)"
 	@echo "  make init <env>           - Initialize Terraform modules (qa, dev, prod)"
 	@echo "  make plan <env>           - Plan environment (qa, dev, prod)"
+	@echo "  make install-tfplan2md      - Install native tfplan2md under .tools/bin (optional; plan auto-installs if needed)"
 	@echo "  make apply <env>          - Apply environment (qa, dev, prod)"
 	@echo "  make fix-providers        - chmod +x Terraform providers (after S3 restore)"
 	@echo "  make compare [<source> <destination>] - Compare configurations"
@@ -80,8 +86,29 @@ _init-modules: ## Internal target to initialize Terraform modules for specific e
 	@echo "✅ Module initialization completed for $(ENV) environment"
 
 
-# Planning targets — scripts/plan/tg2md-plan-logs/ (tfplan2md+glow), scripts/plan/unfiltered-plan-output/ (run-all raw), scripts/plan/all-plans.md
-plan: ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
+# Native tfplan2md (PATH often has a Docker wrapper — fails without Docker). Pin matches .github/workflows/terragrunt-plan.yml default.
+_ensure-tfplan2md:
+	@REPO_ROOT="$(CURDIR)"; TOOLS_BIN="$$REPO_ROOT/.tools/bin"; VERSION="$(TFPLAN2MD_VERSION)"; \
+	mkdir -p "$$TOOLS_BIN"; \
+	if [ -n "$$TFPLAN2MD" ] && [ -x "$$TFPLAN2MD" ]; then echo "tfplan2md: using TFPLAN2MD=$$TFPLAN2MD"; exit 0; fi; \
+	PF=$$(command -v tfplan2md 2>/dev/null || true); \
+	if [ -n "$$PF" ] && [ -f "$$PF" ] && ! head -1 "$$PF" 2>/dev/null | grep -q '^#!'; then echo "tfplan2md: using native $$PF"; exit 0; fi; \
+	if [ -x "$$TOOLS_BIN/tfplan2md" ]; then echo "tfplan2md: using $$TOOLS_BIN/tfplan2md"; exit 0; fi; \
+	echo "tfplan2md: downloading v$$VERSION -> $$TOOLS_BIN ..."; \
+	TGZ="tfplan2md_$${VERSION}_linux-x64.tar.gz"; URL="https://github.com/oocx/tfplan2md/releases/download/v$${VERSION}/$${TGZ}"; \
+	if command -v curl >/dev/null 2>&1; then curl -fsSL -o "/tmp/$$TGZ" "$$URL"; \
+	elif command -v wget >/dev/null 2>&1; then wget -q -O "/tmp/$$TGZ" "$$URL"; \
+	else echo "Need curl or wget to bootstrap tfplan2md."; exit 1; fi; \
+	tar -xzf "/tmp/$$TGZ" -C /tmp && install -m 0755 /tmp/tfplan2md "$$TOOLS_BIN/tfplan2md" && rm -f "/tmp/$$TGZ" /tmp/tfplan2md; \
+	echo "tfplan2md: installed $$TOOLS_BIN/tfplan2md"
+
+install-tfplan2md: ## Install native tfplan2md to .tools/bin (override TFPLAN2MD_VERSION= to match CI)
+	@rm -f "$(CURDIR)/.tools/bin/tfplan2md"
+	@$(MAKE) _ensure-tfplan2md
+
+# Planning targets — scripts/plan/tg2md-plan/ (per-stack tfplan2md + all-plans.md), scripts/plan/unfiltered-plan/all-plans.md (combined report), scripts/plan/all-plans.md (same copy at scripts/plan root)
+# Pipe JSON on stdin per upstream README. Override: TFPLAN2MD=/path/to/native/binary
+plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	@args="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if echo "$$args" | grep -q "qa"; then ENV=qa; \
 	elif echo "$$args" | grep -q "dev"; then ENV=dev; \
@@ -90,19 +117,26 @@ plan: ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	else echo "Usage: make plan qa|dev|prod|production [detailed]"; exit 1; fi; \
 	REPO_ROOT="$(CURDIR)"; \
 	rm -rf "$$REPO_ROOT/scripts/plan" "$$REPO_ROOT/scripts/plan-artifacts"; \
-	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan-logs" "$$REPO_ROOT/scripts/plan/unfiltered-plan-output"; \
-	LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan/tg2md-plan-logs"; UNFILTERED_DIR="$$REPO_ROOT/scripts/plan/unfiltered-plan-output"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; \
+	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan" "$$REPO_ROOT/scripts/plan/unfiltered-plan"; \
+	LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan/tg2md-plan"; UNFILTERED_DIR="$$REPO_ROOT/scripts/plan/unfiltered-plan"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; \
+	PF=$$(command -v tfplan2md 2>/dev/null || true); \
+	if [ -n "$${TFPLAN2MD:-}" ] && [ -x "$${TFPLAN2MD}" ]; then TFMD="$${TFPLAN2MD}"; \
+	elif [ -n "$$PF" ] && [ -f "$$PF" ] && ! head -1 "$$PF" 2>/dev/null | grep -q '^#!'; then TFMD="$$PF"; \
+	elif [ -x "$$REPO_ROOT/.tools/bin/tfplan2md" ]; then TFMD="$$REPO_ROOT/.tools/bin/tfplan2md"; \
+	else TFMD="$$PF"; fi; \
+	if [ -z "$$TFMD" ] || [ ! -x "$$TFMD" ]; then echo "tfplan2md not found; run: make install-tfplan2md"; exit 1; fi; \
+	if head -1 "$$TFMD" 2>/dev/null | grep -q '^#!'; then echo "tfplan2md at $$TFMD is a shell wrapper; run: make install-tfplan2md or set TFPLAN2MD to the native binary."; exit 1; fi; \
+	echo "Using tfplan2md: $$TFMD"; \
 	REGION_ROOT="$$LIVE/$$ENV/us-east-1"; \
 	if [ ! -d "$$REGION_ROOT" ]; then echo "Error: $$REGION_ROOT not found."; exit 1; fi; \
 	mkdir -p "$$TG2MD_ROOT/$$ENV"; \
 	echo "Action:  plan"; echo "Environment: $$ENV"; \
-	echo "==> terragrunt run-all plan (unfiltered) -> $$UNFILTERED_DIR/$$ENV-plan.log"; \
-	(cd "$$REGION_ROOT" && terragrunt run-all plan 2>&1) | tee "$$UNFILTERED_DIR/$$ENV-plan.log"; \
+	echo "==> Combined report -> $$UNFILTERED_DIR/all-plans.md ; per-stack -> tg2md-plan/*.md"; \
 	echo ""; \
 	STACK_CNT=0; \
 	for stack_dir in $$(find "$$LIVE/$$ENV" -name "terragrunt.hcl" -type f ! -path "*/.terragrunt-cache/*" | sed 's|/terragrunt.hcl||' | sort); do \
 	  rel=$$(echo "$$stack_dir" | sed "s|$$LIVE/||"); \
-	  out_dir="$$TG2MD_ROOT/$$rel"; plan_tfplan="$$out_dir/plan.tfplan"; plan_json="$$out_dir/plan.json"; plan_fixed="$$out_dir/plan.tfplan2md.json"; plan_md="$$out_dir/plan.md"; \
+	  out_dir="$$TG2MD_ROOT/$$rel"; plan_tfplan="$$out_dir/plan.tfplan"; plan_json="$$out_dir/plan.json"; plan_md="$$out_dir/plan.md"; \
 	  mkdir -p "$$out_dir"; echo "==> $$rel (plan)"; \
 	  echo "    running terragrunt plan..."; \
 	  attempt=1; while true; do (cd "$$stack_dir" && TG_LOG= terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false >/dev/null 2>&1) && break; \
@@ -112,11 +146,25 @@ plan: ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	  (cd "$$stack_dir" && TG_LOG= terragrunt show -json "$$plan_tfplan" > "$$plan_json" 2>/dev/null) || true; \
 	  if [ ! -s "$$plan_json" ]; then echo "    skip (no plan JSON)"; continue; fi; \
 	  if command -v jq >/dev/null 2>&1; then \
-	    jq 'if .resource_changes == null then . + {"resource_changes": []} else . end' "$$plan_json" > "$$plan_fixed" 2>/dev/null || cp "$$plan_json" "$$plan_fixed"; \
-	  else cp "$$plan_json" "$$plan_fixed"; fi; \
-	  (cd "$$out_dir" && tfplan2md --render-target github --details closed plan.tfplan2md.json > plan.md 2>/dev/null) || true; rm -f "$$plan_fixed"; \
-	  if [ ! -s "$$plan_md" ]; then (cd "$$stack_dir" && TG_LOG= terragrunt show -no-color "$$plan_tfplan" > "$$plan_md" 2>/dev/null) || true; fi; \
-	  if [ -s "$$plan_md" ]; then echo "    -> $$out_dir/plan.md"; else echo "# Plan: \`$$rel\`" > "$$plan_md"; echo "" >> "$$plan_md"; echo "No tfplan2md output." >> "$$plan_md"; fi; \
+	    jq 'if .resource_changes == null then . + {"resource_changes": []} else . end' "$$plan_json" \
+	      | "$$TFMD" --render-target "$(TFPLAN2MD_RENDER_TARGET)" --details closed > "$$plan_md" 2>"$$out_dir/tfplan2md.stderr" || true; \
+	  else \
+	    cat "$$plan_json" | "$$TFMD" --render-target "$(TFPLAN2MD_RENDER_TARGET)" --details closed > "$$plan_md" 2>"$$out_dir/tfplan2md.stderr" || true; \
+	  fi; \
+	  if [ ! -s "$$plan_md" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then \
+	    if command -v jq >/dev/null 2>&1; then \
+	      jq 'if .resource_changes == null then . + {"resource_changes": []} else . end' "$$plan_json" \
+	        | docker run -i --rm oocx/tfplan2md:latest --render-target "$(TFPLAN2MD_RENDER_TARGET)" --details closed > "$$plan_md" 2>"$$out_dir/tfplan2md.docker.stderr" || true; \
+	    else \
+	      cat "$$plan_json" | docker run -i --rm oocx/tfplan2md:latest --render-target "$(TFPLAN2MD_RENDER_TARGET)" --details closed > "$$plan_md" 2>"$$out_dir/tfplan2md.docker.stderr" || true; \
+	    fi; \
+	  fi; \
+	  if [ ! -s "$$plan_md" ]; then \
+	    echo "# tfplan2md failed — \`$$rel\`" > "$$plan_md"; echo "" >> "$$plan_md"; \
+	    echo "Expected: markdown tables from \`terraform show -json\` via [tfplan2md](https://github.com/oocx/tfplan2md). Install the **linux-x64 release tarball** binary, or run Docker, or set \`TFPLAN2MD=/path/to/tfplan2md\` if your \`tfplan2md\` command is only a Docker wrapper." >> "$$plan_md"; echo "" >> "$$plan_md"; \
+	    echo "**stderr (native):**" >> "$$plan_md"; echo '```' >> "$$plan_md"; cat "$$out_dir/tfplan2md.stderr" 2>/dev/null >> "$$plan_md"; echo '```' >> "$$plan_md"; \
+	    if [ -s "$$out_dir/tfplan2md.docker.stderr" ]; then echo "" >> "$$plan_md"; echo "**stderr (docker):**" >> "$$plan_md"; echo '```' >> "$$plan_md"; cat "$$out_dir/tfplan2md.docker.stderr" >> "$$plan_md"; echo '```' >> "$$plan_md"; fi; \
+	  else echo "    -> tfplan2md -> $$plan_md"; fi; \
 	  STACK_CNT=$$((STACK_CNT+1)); \
 	done; \
 	echo "Stacks planned: $$STACK_CNT"; echo ""; \
@@ -127,13 +175,14 @@ plan: ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	  echo "## Stack: \`$$rel\`" >> "$$ALL_PLANS"; echo "" >> "$$ALL_PLANS"; \
 	  sed -E 's/^[[:space:]]*[A-Za-z0-9+/=]{200,}$$/  (omitted)/g' "$$f" 2>/dev/null >> "$$ALL_PLANS" || cat "$$f" >> "$$ALL_PLANS"; echo "" >> "$$ALL_PLANS"; echo "---" >> "$$ALL_PLANS"; echo "" >> "$$ALL_PLANS"; \
 	done; \
-	if command -v glow >/dev/null 2>&1; then glow "$$ALL_PLANS" > "$$LOGS_PLAN/all-plans.md" 2>/dev/null || cp "$$ALL_PLANS" "$$LOGS_PLAN/all-plans.md"; else cp "$$ALL_PLANS" "$$LOGS_PLAN/all-plans.md" 2>/dev/null || true; fi; \
+	cp -f "$$ALL_PLANS" "$$LOGS_PLAN/all-plans.md" 2>/dev/null || true; \
+	cp -f "$$ALL_PLANS" "$$UNFILTERED_DIR/all-plans.md" 2>/dev/null || true; \
 	cp -f "$$LOGS_PLAN/all-plans.md" "$$REPO_ROOT/scripts/plan/all-plans.md" 2>/dev/null || true; \
 	for f in $$(find "$$TG2MD_ROOT/$$ENV" -name "plan.md" -type f 2>/dev/null | sort); do \
 	  rel=$$(echo "$$f" | sed "s|$$TG2MD_ROOT/$$ENV/||" | sed 's|/plan.md||'); slug=$$(echo "$$rel" | tr '/' '-'); \
-	  if command -v glow >/dev/null 2>&1; then glow "$$f" > "$$LOGS_PLAN/$$slug.log" 2>/dev/null || cp "$$f" "$$LOGS_PLAN/$$slug.log"; else cp "$$f" "$$LOGS_PLAN/$$slug.log"; fi; echo "Log: $$LOGS_PLAN/$$slug.log"; \
+	  cp -f "$$f" "$$LOGS_PLAN/$$slug.md"; echo "Wrote: $$LOGS_PLAN/$$slug.md"; \
 	done; \
-	echo "Done. Combined plan: $$LOGS_PLAN/all-plans.md (copy: $$REPO_ROOT/scripts/plan/all-plans.md)"; echo "View: glow $$LOGS_PLAN/all-plans.md"; \
+	echo "Done. Combined plan: $$UNFILTERED_DIR/all-plans.md (copies: $$LOGS_PLAN/all-plans.md, $$REPO_ROOT/scripts/plan/all-plans.md)"; echo "View: glow $$UNFILTERED_DIR/all-plans.md"; \
 	rm -rf "$$TG2MD_ROOT"; echo "Cleaned up scripts/plan-artifacts (outputs under scripts/plan/ are fresh for this env)."
 
 fix-providers: ## chmod +x all terraform-provider-* (fixes permission denied after S3 restore)
