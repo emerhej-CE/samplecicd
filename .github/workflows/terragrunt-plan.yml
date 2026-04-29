@@ -279,7 +279,8 @@ jobs:
           # Verbose logs for troubleshooting (see scripts/plan/terragrunt-logs/*.log in artifact)
           TG_LOG: DEBUG
           TF_LOG: INFO
-          TF_CLI_ARGS_plan: -no-color
+          # Do not set TF_CLI_ARGS_plan here — it merged badly with terragrunt passthrough on TF 1.14+
+          NO_COLOR: "1"
         run: |
           set -euo pipefail
           echo "Branch: ${{ github.ref_name }}  Discovered live_env: ${LIVE_ENV}  (maps to: make plan ${LIVE_ENV})"

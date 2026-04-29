@@ -107,6 +107,7 @@ install-tfplan2md: ## Install native tfplan2md to .tools/bin (override TFPLAN2MD
 	@$(MAKE) _ensure-tfplan2md
 
 # Planning targets — scripts/plan/tg2md-plan/, unfiltered-plan/all-plans.md, terragrunt-logs/*.log (full terragrunt plan stdout/stderr per stack), scripts/plan/all-plans.md
+# Do not use `terragrunt plan ... -- -input=false`: Terraform then treats post-`--` args as positionals → "Too many command line arguments" (TF 1.14+).
 # Pipe JSON on stdin per upstream README. Override: TFPLAN2MD=/path/to/native/binary
 plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	@args="$(filter-out $@,$(MAKECMDGOALS))"; \
@@ -145,7 +146,7 @@ plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|produc
 	  attempt=1; \
 	  while [ $$attempt -le 3 ]; do \
 	    echo "" >> "$$TG_STACK_LOG"; echo "==== attempt $$attempt $$(date -u +%Y-%m-%dT%H:%M:%SZ) stack=$$rel ====" >> "$$TG_STACK_LOG"; \
-	    (cd "$$stack_dir" && terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false) >> "$$TG_STACK_LOG" 2>&1; \
+	    (cd "$$stack_dir" && terragrunt plan -input=false -lock=false -out="$$plan_tfplan") >> "$$TG_STACK_LOG" 2>&1; \
 	    plan_exit=$$?; echo "==== terragrunt exit code: $$plan_exit ====" >> "$$TG_STACK_LOG"; \
 	    if [ -f "$$plan_tfplan" ]; then break; fi; \
 	    if [ $$attempt -ge 3 ]; then break; fi; \
