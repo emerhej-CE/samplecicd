@@ -205,12 +205,14 @@ jobs:
     name: Apply ${{ matrix.module }}
     needs: [discover, review-before-apply]
     runs-on: ubuntu-latest
-    # Terragrunt v0.67 uses TERRAGRUNT_NO_COLOR / --terragrunt-no-color (NO_COLOR alone does not disable TG logs).
-    # ANSI in dependency subprocess output breaks JSON parse (e.g. cloudfront dependency.s3).
+    # TG 0.67: TERRAGRUNT_NO_COLOR + forward TF stdout — dependency reads JSON from terraform output;
+    # without forward, TG wraps/logs TF output and parsers see JSON + text ("Warning..." → invalid char 'W').
     env:
       NO_COLOR: "1"
       TF_IN_AUTOMATION: "1"
       TERRAGRUNT_NO_COLOR: "1"
+      TERRAGRUNT_FORWARD_TF_STDOUT: "1"
+      TERRAGRUNT_LOG_LEVEL: "error"
       TF_CLI_ARGS: "-no-color"
     strategy:
       fail-fast: false
@@ -238,5 +240,5 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
-      - run: terragrunt --terragrunt-no-color init -input=false --terragrunt-non-interactive
-      - run: terragrunt --terragrunt-no-color apply -auto-approve -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout init -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout apply -auto-approve -input=false --terragrunt-non-interactive
