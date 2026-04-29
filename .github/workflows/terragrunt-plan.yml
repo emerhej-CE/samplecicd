@@ -7,7 +7,7 @@
 #   preprod branch: only live/dev/** or live/qa/** (change under live/dev → make plan dev; live/qa → make plan qa).
 #   production branch: only live/prod/** → make plan prod.
 #   modules/** or no live path in diff → default live/qa/us-east-1 on preprod; on production you must touch live/prod or set TG_STACKS_DIR.
-# Artifacts: make-plan-output.log; scripts/plan/** (tg2md-plan/*.md, unfiltered-plan/all-plans.md = concatenated per-stack plans).
+# Artifacts: plan/** (staged from scripts/plan: tg2md-plan/*.md, unfiltered-plan/all-plans.md).
 name: Terragrunt Plan
 
 on:
@@ -276,7 +276,7 @@ jobs:
       - name: Run Makefile plan
         env:
           LIVE_ENV: ${{ needs.discover.outputs.live_env }}
-          # Verbose logs for troubleshooting (see make-plan-output.log and unfiltered-plan/all-plans.md in artifact)
+          # Verbose logs for troubleshooting (see make-plan-output.log in job log; unfiltered under scripts/plan/)
           TG_LOG: DEBUG
           TF_LOG: INFO
           # Do not set TF_CLI_ARGS_plan here — it merged badly with terragrunt passthrough on TF 1.14+
@@ -312,10 +312,8 @@ jobs:
         if: always()
         with:
           # PR: name by target branch (preprod|production); push: branch pushed
-          # Zip layout: plan/<tg2md-plan|unfiltered-plan>/… + make-plan-output.log (Makefile still writes scripts/plan/)
+          # Zip layout: plan/<tg2md-plan|unfiltered-plan>/… only (Makefile still writes scripts/plan/)
           name: terragrunt-plan-${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}-${{ needs.discover.outputs.live_env }}
-          path: |
-            make-plan-output.log
-            plan
+          path: plan
           if-no-files-found: warn
           retention-days: 30
