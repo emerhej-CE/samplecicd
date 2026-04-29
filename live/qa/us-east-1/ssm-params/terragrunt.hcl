@@ -20,9 +20,9 @@ terraform {
 inputs = {
   environment = local.environment
   project     = local.project
-  # Leave empty or override: TG_inputs via TF_VAR_* / terragrunt if needed
-  value_a = ""
-  value_b = ""
+  # AWS PutParameter rejects empty string; override in CI/locals if needed
+  value_a = "placeholder"
+  value_b = "placeholder"
   common_tags = merge(
     local.global_config.global,
     local.global_config.global_tags,
