@@ -106,7 +106,7 @@ install-tfplan2md: ## Install native tfplan2md to .tools/bin (override TFPLAN2MD
 	@rm -f "$(CURDIR)/.tools/bin/tfplan2md"
 	@$(MAKE) _ensure-tfplan2md
 
-# Planning targets — scripts/plan/tg2md-plan/ (per-stack tfplan2md + all-plans.md), scripts/plan/unfiltered-plan/all-plans.md (combined report), scripts/plan/all-plans.md (same copy at scripts/plan root)
+# Planning targets — scripts/plan/tg2md-plan/, unfiltered-plan/all-plans.md, terragrunt-logs/*.log (full terragrunt plan stdout/stderr per stack), scripts/plan/all-plans.md
 # Pipe JSON on stdin per upstream README. Override: TFPLAN2MD=/path/to/native/binary
 plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|production [detailed])
 	@args="$(filter-out $@,$(MAKECMDGOALS))"; \
@@ -117,8 +117,8 @@ plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|produc
 	else echo "Usage: make plan qa|dev|prod|production [detailed]"; exit 1; fi; \
 	REPO_ROOT="$(CURDIR)"; \
 	rm -rf "$$REPO_ROOT/scripts/plan" "$$REPO_ROOT/scripts/plan-artifacts"; \
-	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan" "$$REPO_ROOT/scripts/plan/unfiltered-plan"; \
-	LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan/tg2md-plan"; UNFILTERED_DIR="$$REPO_ROOT/scripts/plan/unfiltered-plan"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; \
+	mkdir -p "$$REPO_ROOT/scripts/plan/tg2md-plan" "$$REPO_ROOT/scripts/plan/unfiltered-plan" "$$REPO_ROOT/scripts/plan/terragrunt-logs"; \
+	LIVE="$$REPO_ROOT/live"; LOGS_PLAN="$$REPO_ROOT/scripts/plan/tg2md-plan"; UNFILTERED_DIR="$$REPO_ROOT/scripts/plan/unfiltered-plan"; TG2MD_ROOT="$$REPO_ROOT/scripts/plan-artifacts"; TGLOG_DIR="$$REPO_ROOT/scripts/plan/terragrunt-logs"; \
 	PF=$$(command -v tfplan2md 2>/dev/null || true); \
 	if [ -n "$${TFPLAN2MD:-}" ] && [ -x "$${TFPLAN2MD}" ]; then TFMD="$${TFPLAN2MD}"; \
 	elif [ -n "$$PF" ] && [ -f "$$PF" ] && ! head -1 "$$PF" 2>/dev/null | grep -q '^#!'; then TFMD="$$PF"; \
@@ -132,16 +132,31 @@ plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|produc
 	mkdir -p "$$TG2MD_ROOT/$$ENV"; \
 	echo "Action:  plan"; echo "Environment: $$ENV"; \
 	echo "==> Combined report -> $$UNFILTERED_DIR/all-plans.md ; per-stack -> tg2md-plan/*.md"; \
+	echo "    terragrunt stderr/stdout -> $$TGLOG_DIR/<stack>.log (for CI debug)"; \
 	echo ""; \
 	STACK_CNT=0; \
 	for stack_dir in $$(find "$$LIVE/$$ENV" -name "terragrunt.hcl" -type f ! -path "*/.terragrunt-cache/*" | sed 's|/terragrunt.hcl||' | sort); do \
-	  rel=$$(echo "$$stack_dir" | sed "s|$$LIVE/||"); \
+	  rel=$$(echo "$$stack_dir" | sed "s|$$LIVE/||"); slug=$$(echo "$$rel" | tr '/' '-'); \
 	  out_dir="$$TG2MD_ROOT/$$rel"; plan_tfplan="$$out_dir/plan.tfplan"; plan_json="$$out_dir/plan.json"; plan_md="$$out_dir/plan.md"; \
+	  TG_STACK_LOG="$$TGLOG_DIR/$$slug.log"; \
 	  mkdir -p "$$out_dir"; echo "==> $$rel (plan)"; \
-	  echo "    running terragrunt plan..."; \
-	  attempt=1; while true; do (cd "$$stack_dir" && TG_LOG= terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false >/dev/null 2>&1) && break; \
-	    [ $$attempt -ge 3 ] && break; echo "    retry $$((attempt+1))/3..."; attempt=$$((attempt+1)); done; \
-	  if [ ! -f "$$plan_tfplan" ]; then echo "    skip (no plan file)"; continue; fi; \
+	  echo "    running terragrunt plan -> $$TG_STACK_LOG"; \
+	  : > "$$TG_STACK_LOG"; \
+	  attempt=1; \
+	  while [ $$attempt -le 3 ]; do \
+	    echo "" >> "$$TG_STACK_LOG"; echo "==== attempt $$attempt $$(date -u +%Y-%m-%dT%H:%M:%SZ) stack=$$rel ====" >> "$$TG_STACK_LOG"; \
+	    (cd "$$stack_dir" && terragrunt plan -lock=false -out="$$plan_tfplan" -- -input=false) >> "$$TG_STACK_LOG" 2>&1; \
+	    plan_exit=$$?; echo "==== terragrunt exit code: $$plan_exit ====" >> "$$TG_STACK_LOG"; \
+	    if [ -f "$$plan_tfplan" ]; then break; fi; \
+	    if [ $$attempt -ge 3 ]; then break; fi; \
+	    echo "    retry $$((attempt+1))/3..."; attempt=$$((attempt+1)); \
+	  done; \
+	  if [ ! -f "$$plan_tfplan" ]; then \
+	    echo "    skip (no plan file) — full log: scripts/plan/terragrunt-logs/$$slug.log"; \
+	    echo "    --- last 45 lines of terragrunt output ---"; \
+	    tail -n 45 "$$TG_STACK_LOG" 2>/dev/null || true; \
+	    continue; \
+	  fi; \
 	  echo "    converting to markdown..."; \
 	  (cd "$$stack_dir" && TG_LOG= terragrunt show -json "$$plan_tfplan" > "$$plan_json" 2>/dev/null) || true; \
 	  if [ ! -s "$$plan_json" ]; then echo "    skip (no plan JSON)"; continue; fi; \
@@ -182,7 +197,8 @@ plan: _ensure-tfplan2md ## Plan environment (usage: make plan qa|dev|prod|produc
 	  rel=$$(echo "$$f" | sed "s|$$TG2MD_ROOT/$$ENV/||" | sed 's|/plan.md||'); slug=$$(echo "$$rel" | tr '/' '-'); \
 	  cp -f "$$f" "$$LOGS_PLAN/$$slug.md"; echo "Wrote: $$LOGS_PLAN/$$slug.md"; \
 	done; \
-	echo "Done. Combined plan: $$UNFILTERED_DIR/all-plans.md (copies: $$LOGS_PLAN/all-plans.md, $$REPO_ROOT/scripts/plan/all-plans.md)"; echo "View: glow $$UNFILTERED_DIR/all-plans.md"; \
+	echo "Done. Combined plan: $$UNFILTERED_DIR/all-plans.md (copies: $$LOGS_PLAN/all-plans.md, $$REPO_ROOT/scripts/plan/all-plans.md)"; \
+	echo "Terragrunt logs: $$TGLOG_DIR/*.log"; echo "View: glow $$UNFILTERED_DIR/all-plans.md"; \
 	rm -rf "$$TG2MD_ROOT"; echo "Cleaned up scripts/plan-artifacts (outputs under scripts/plan/ are fresh for this env)."
 
 fix-providers: ## chmod +x all terraform-provider-* (fixes permission denied after S3 restore)
