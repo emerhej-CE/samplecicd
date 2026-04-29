@@ -123,6 +123,8 @@ jobs:
     env:
       NO_COLOR: "1"
       TF_IN_AUTOMATION: "1"
+      TERRAGRUNT_NO_COLOR: "1"
+      TF_CLI_ARGS: "-no-color"
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -149,5 +151,5 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
-      - run: terragrunt init -input=false --terragrunt-non-interactive
-      - run: terragrunt destroy -auto-approve -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color init -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color destroy -auto-approve -input=false --terragrunt-non-interactive

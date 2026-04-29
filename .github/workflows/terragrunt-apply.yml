@@ -205,10 +205,13 @@ jobs:
     name: Apply ${{ matrix.module }}
     needs: [discover, review-before-apply]
     runs-on: ubuntu-latest
-    # Avoid ANSI (\\x1b) in subprocess output — Terragrunt parses dependency outputs as JSON; colors break cloudfront → s3 dependency reads.
+    # Terragrunt v0.67 uses TERRAGRUNT_NO_COLOR / --terragrunt-no-color (NO_COLOR alone does not disable TG logs).
+    # ANSI in dependency subprocess output breaks JSON parse (e.g. cloudfront dependency.s3).
     env:
       NO_COLOR: "1"
       TF_IN_AUTOMATION: "1"
+      TERRAGRUNT_NO_COLOR: "1"
+      TF_CLI_ARGS: "-no-color"
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -235,5 +238,5 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
-      - run: terragrunt init -input=false --terragrunt-non-interactive
-      - run: terragrunt apply -auto-approve -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color init -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color apply -auto-approve -input=false --terragrunt-non-interactive
