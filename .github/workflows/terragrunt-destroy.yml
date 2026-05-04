@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "To destroy all stacks under a region: live/prod/<region>. To destroy one module only: live/prod/<region>/<module>"
+        description: |
+          To destroy all stacks under a region: live/<env>/<region>
+          To destroy one module only: live/<env>/<region>/<module>
         required: true
         type: string
 
