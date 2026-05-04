@@ -1,14 +1,12 @@
-# Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
-#   preprod branch: use stack_path = live/<env>/<region> only (dev/qa) — destroys all modules under that region. No single-module path.
-#   production branch: stack_path = live/prod/<region> (all modules) or live/prod/<region>/<module> (one module).
-#   Run this workflow from the branch you intend (preprod vs production). Optional: vars.TG_VERSION
+# Terragrunt destroy — run from branch preprod (dev/qa paths) or production (live/prod only).
+# Vars: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
 name: Terragrunt Destroy
 
 on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "preprod: live/<env>/<region> (e.g. live/qa/us-east-1). production: live/prod/<region> or live/prod/<region>/<module>"
+        description: "Branch preprod — To destroy all stacks under a region: live/<env>/<region> (e.g. live/qa/us-east-1). To destroy one module only: live/<env>/<region>/<module> (e.g. live/dev/us-east-1/s3). Branch production — To destroy all stacks under a region: live/prod/<region> (e.g. live/prod/us-east-1). To destroy one module only: live/prod/<region>/<module> (e.g. live/prod/us-east-1/s3)."
         required: true
         type: string
 
@@ -48,8 +46,7 @@ jobs:
 
           if REF not in ("preprod", "production"):
               print(
-                  "error: run this workflow from branch preprod or production only "
-                  f"(got ref={REF!r})",
+                  "error: run this workflow from branch preprod or production only (got ref=%r)" % (REF,),
                   file=sys.stderr,
               )
               sys.exit(1)
@@ -57,13 +54,13 @@ jobs:
           parts = [p for p in BASE.strip("/").split("/") if p]
           if len(parts) > 4:
               print(
-                  "error: stack_path has too many segments (use live/<env>/<region> or live/<env>/<region>/<module>)",
+                  "error: use live/<env>/<region> or live/<env>/<region>/<module>",
                   file=sys.stderr,
               )
               sys.exit(1)
           if len(parts) < 3 or parts[0] != "live":
               print(
-                  "error: stack_path must be live/<env>/<region> or, on production only, live/prod/<region>/<module>",
+                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module>",
                   file=sys.stderr,
               )
               sys.exit(1)
@@ -72,36 +69,31 @@ jobs:
           if env_part not in ("dev", "qa", "prod"):
               print(f"error: env must be dev, qa, or prod, got {env_part!r}", file=sys.stderr)
               sys.exit(1)
+
+          if REF == "preprod":
+              if env_part == "prod":
+                  print(
+                      "error: from branch preprod use stack_path under live/dev/ or live/qa/ only "
+                      "(run from branch production with live/prod/… to destroy prod)",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+          elif REF == "production":
+              if env_part != "prod":
+                  print(
+                      "error: from branch production use stack_path under live/prod/ only "
+                      "(got env=%r; run from branch preprod for dev/qa)"
+                      % (env_part,),
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
           if not re.fullmatch(r"[a-z0-9-]+", region_part):
               print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
               sys.exit(1)
+
           live_env = env_part
           region_root = "/".join(parts[:3])
-
-          if REF == "preprod":
-              if len(parts) != 3:
-                  print(
-                      "error: on preprod branch use full region path only: live/<env>/<region> "
-                      "(single-module path is only for the production branch)",
-                      file=sys.stderr,
-                  )
-                  sys.exit(1)
-              if env_part == "prod":
-                  print(
-                      "error: to destroy production resources run this workflow from the production branch "
-                      "with stack_path under live/prod/...",
-                      file=sys.stderr,
-                  )
-                  sys.exit(1)
-
-          if REF == "production":
-              if env_part != "prod":
-                  print(
-                      "error: on production branch stack_path must start with live/prod/ "
-                      f"(got env={env_part!r})",
-                      file=sys.stderr,
-                  )
-                  sys.exit(1)
 
           def module_names(root):
               paths = glob.glob(os.path.join(root, "*", "terragrunt.hcl"))
@@ -156,7 +148,7 @@ jobs:
               if MODE == "destroy":
                   order = list(reversed(order))
           else:
-              print("error: invalid stack_path length", file=sys.stderr)
+              print("error: invalid stack_path", file=sys.stderr)
               sys.exit(1)
 
           obj = {
@@ -169,13 +161,14 @@ jobs:
           )
           MATRIX=$(echo "$FULL" | jq -c '.matrix')
           LIVE_ENV=$(echo "$FULL" | jq -r '.live_env')
-          STACK_PATH_OUT=$(echo "$FULL" | jq -r '.stack_path')
+          STACK=$(echo "$FULL" | jq -r '.stack_path')
+
           echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "live_env=$LIVE_ENV" >> "$GITHUB_OUTPUT"
-          echo "stack_path=$STACK_PATH_OUT" >> "$GITHUB_OUTPUT"
-          echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK_PATH_OUT"
+          echo "stack_path=$STACK" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK"
 
   destroy:
     name: Destroy ${{ matrix.module }}
