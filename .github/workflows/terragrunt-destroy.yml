@@ -172,9 +172,20 @@ jobs:
           echo "stack_path=$STACK" >> "$GITHUB_OUTPUT"
           echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK"
 
+  review-before-destroy:
+    name: Review before destroy
+    needs: [discover]
+    if: github.ref_name == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - run: echo "Waiting for approval"
+
   destroy:
     name: Destroy ${{ matrix.module }}
-    needs: [discover]
+    needs: [discover, review-before-destroy]
+    if: ${{ !cancelled() && needs.discover.result == 'success' && (needs.review-before-destroy.result == 'success' || needs.review-before-destroy.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       NO_COLOR: "1"
