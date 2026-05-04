@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "Path only — no DESTROY phrase. All stacks under a region: live/<env>/<region> (e.g. live/qa/us-east-1). One module: live/<env>/<region>/<module> (e.g. live/dev/us-east-1/s3). From preprod: env must be dev or qa only."
+        description: |
+          - to destroy all stacks under a region: live/<env>/<region> (e.g. live/qa/us-east-1).
+          - to destroy one module only: live/<env>/<region>/<module> (e.g. live/dev/us-east-1/s3).
         required: true
         type: string
 
