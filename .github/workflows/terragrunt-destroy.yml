@@ -1,15 +1,12 @@
-# Portable Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
-#   Confirmation is the stack_path you enter (no separate phrase to type in this workflow).
-#   Production: live/prod/<region> (all stacks under that region) or live/prod/<region>/<module> (one stack).
-#   Same pattern for dev/qa: live/<env>/<region> or live/<env>/<region>/<module>.
-#   TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
+# Terragrunt destroy — vars: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
+# From branch preprod: stack_path targets dev or qa only — full region or one module. No live/prod paths (use production branch when we add prod rules).
 name: Terragrunt Destroy
 
 on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "Path only — no DESTROY phrase. All stacks: live/<env>/<region> e.g. live/prod/us-east-1. One module: live/prod/us-east-1/s3"
+        description: "Path only — no DESTROY phrase. All stacks under a region: live/<env>/<region> (e.g. live/qa/us-east-1). One module: live/<env>/<region>/<module> (e.g. live/dev/us-east-1/s3). From preprod: env must be dev or qa only."
         required: true
         type: string
 
@@ -31,6 +28,7 @@ jobs:
         env:
           TG_MODE: destroy
           STACK_PATH: ${{ github.event.inputs.stack_path }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           FULL=$(python3 <<'PY'
@@ -43,13 +41,34 @@ jobs:
 
           BASE = os.environ.get("STACK_PATH", "").strip()
           MODE = os.environ.get("TG_MODE", "apply")
+          REF = (os.environ.get("GITHUB_REF_NAME") or "").strip()
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
+          if REF == "production":
+              print(
+                  "error: destroy from the production branch is not configured yet in this workflow; "
+                  "use branch preprod with stack_path under live/dev/ or live/qa/ for now",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          if REF != "preprod":
+              print(
+                  "error: run this workflow from branch preprod (got ref=%r)" % (REF,),
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
           parts = [p for p in BASE.strip("/").split("/") if p]
+          if len(parts) > 4:
+              print(
+                  "error: use live/<env>/<region> or live/<env>/<region>/<module>",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
           if len(parts) < 3 or parts[0] != "live":
               print(
-                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module>, "
-                  f"got {BASE!r}",
+                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module>",
                   file=sys.stderr,
               )
               sys.exit(1)
@@ -57,6 +76,13 @@ jobs:
           env_part, region_part = parts[1], parts[2]
           if env_part not in ("dev", "qa", "prod"):
               print(f"error: env must be dev, qa, or prod, got {env_part!r}", file=sys.stderr)
+              sys.exit(1)
+          if env_part == "prod":
+              print(
+                  "error: preprod destroy supports live/dev/ and live/qa/ only, not live/prod/… "
+                  "(production destroys will use the production branch when enabled)",
+                  file=sys.stderr,
+              )
               sys.exit(1)
           if not re.fullmatch(r"[a-z0-9-]+", region_part):
               print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
@@ -98,7 +124,6 @@ jobs:
                   sys.exit(1)
               return out
 
-          # Single module: live/<env>/<region>/<module>
           if len(parts) == 4:
               module_name = parts[3]
               if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", module_name):
@@ -118,11 +143,7 @@ jobs:
               if MODE == "destroy":
                   order = list(reversed(order))
           else:
-              print(
-                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module> "
-                  f"(got {len(parts)} path segments in {BASE!r})",
-                  file=sys.stderr,
-              )
+              print("error: invalid stack_path", file=sys.stderr)
               sys.exit(1)
 
           obj = {
@@ -143,12 +164,6 @@ jobs:
           echo "live_env=$LIVE_ENV" >> "$GITHUB_OUTPUT"
           echo "stack_path=$STACK" >> "$GITHUB_OUTPUT"
           echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK"
-
-      - name: Planned destroy scope
-        run: |
-          echo "live_env=${{ steps.set.outputs.live_env }}"
-          echo "region_root=${{ steps.set.outputs.stack_path }}"
-          echo "modules_matrix=${{ steps.set.outputs.matrix }}"
 
   destroy:
     name: Destroy ${{ matrix.module }}
@@ -187,11 +202,5 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
-      - name: Destroy target (stack_path is the only confirmation; no DESTROY phrase)
-        run: |
-          echo "live_env=${{ needs.discover.outputs.live_env }}"
-          echo "module=${{ matrix.module }}"
-          echo "path=${{ needs.discover.outputs.stack_path }}/${{ matrix.module }}"
-          pwd
       - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout init -input=false --terragrunt-non-interactive
       - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout destroy -auto-approve -input=false --terragrunt-non-interactive
