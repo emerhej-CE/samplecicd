@@ -5,11 +5,8 @@ name: Terragrunt Destroy
 on:
   workflow_dispatch:
     inputs:
-      # Examples below are prod-shaped; discover still only allows preprod→live/dev|qa and production→live/prod.
       stack_path:
-        description: |
-          To destroy all stacks under a region: live/prod/<region>.
-          To destroy one module only: live/prod/<region>/<module>.
+        description: "To destroy all stacks under a region: live/prod/<region>. To destroy one module only: live/prod/<region>/<module>"
         required: true
         type: string
 
