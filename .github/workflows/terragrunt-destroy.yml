@@ -1,5 +1,7 @@
 # Portable Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
-#   workflow_dispatch.stack_path: full region root live/<env>/<region> (destroy all stacks), OR add /<module> to destroy one stack only.
+#   Confirmation is the stack_path you enter (no separate phrase to type in this workflow).
+#   Production: live/prod/<region> (all stacks under that region) or live/prod/<region>/<module> (one stack).
+#   Same pattern for dev/qa: live/<env>/<region> or live/<env>/<region>/<module>.
 #   TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
 name: Terragrunt Destroy
 
@@ -7,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "Region root: live/<env>/<region> (destroy all). Or one module: live/<env>/<region>/<module> e.g. live/dev/us-east-1/vpc"
+        description: "Path only — no DESTROY phrase. All stacks: live/<env>/<region> e.g. live/prod/us-east-1. One module: live/prod/us-east-1/s3"
         required: true
         type: string
 
@@ -142,6 +144,12 @@ jobs:
           echo "stack_path=$STACK" >> "$GITHUB_OUTPUT"
           echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK"
 
+      - name: Planned destroy scope
+        run: |
+          echo "live_env=${{ steps.set.outputs.live_env }}"
+          echo "region_root=${{ steps.set.outputs.stack_path }}"
+          echo "modules_matrix=${{ steps.set.outputs.matrix }}"
+
   destroy:
     name: Destroy ${{ matrix.module }}
     needs: [discover]
@@ -179,5 +187,11 @@ jobs:
           chmod +x terragrunt
           sudo mv terragrunt /usr/local/bin/terragrunt
           terragrunt --version
+      - name: Destroy target (stack_path is the only confirmation; no DESTROY phrase)
+        run: |
+          echo "live_env=${{ needs.discover.outputs.live_env }}"
+          echo "module=${{ matrix.module }}"
+          echo "path=${{ needs.discover.outputs.stack_path }}/${{ matrix.module }}"
+          pwd
       - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout init -input=false --terragrunt-non-interactive
       - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout destroy -auto-approve -input=false --terragrunt-non-interactive
