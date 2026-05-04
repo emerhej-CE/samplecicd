@@ -3,8 +3,9 @@ testkey
 
 .terragrunt-cache/
 .terraform/
+.tools/
 *.tfstate
 *.tfstate.*
 crash.*.log
-scripts/plan/*.log
-scripts/plan/*.md
+scripts/plan/tg2md-plan/
+scripts/plan/unfiltered-plan/

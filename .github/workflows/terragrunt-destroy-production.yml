@@ -1,0 +1,197 @@
+# Run manual destroy from branch **production** only. Separate workflow file so GitHub can show prod-only help text
+# (see terragrunt-destroy-preprod.yml for dev/qa). Vars: PROD_AWS_ROLE_ARN, AWS_REGION (required)
+name: Terragrunt Destroy (production)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_path:
+        description: "To destroy all stacks under a region: live/prod/<region> (e.g. live/prod/us-east-1). To destroy one module only: live/prod/<region>/<module> (e.g. live/prod/us-east-1/s3)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  discover:
+    name: Discover Terragrunt stacks (destroy order)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      live_env: ${{ steps.set.outputs.live_env }}
+      stack_path: ${{ steps.set.outputs.stack_path }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set
+        env:
+          TG_MODE: destroy
+          STACK_PATH: ${{ github.event.inputs.stack_path }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          FULL=$(python3 <<'PY'
+          import glob
+          import json
+          import os
+          import re
+          import sys
+          from collections import defaultdict, deque
+
+          BASE = os.environ.get("STACK_PATH", "").strip()
+          MODE = os.environ.get("TG_MODE", "apply")
+          REF = (os.environ.get("GITHUB_REF_NAME") or "").strip()
+          DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
+
+          if REF != "production":
+              print(
+                  "error: run \"Terragrunt Destroy (production)\" from branch production only (got ref=%r)"
+                  % (REF,),
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          parts = [p for p in BASE.strip("/").split("/") if p]
+          if len(parts) > 4:
+              print(
+                  "error: use live/prod/<region> or live/prod/<region>/<module>",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if len(parts) < 3 or parts[0] != "live":
+              print(
+                  "error: stack_path must be live/prod/<region> or live/prod/<region>/<module>",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          env_part, region_part = parts[1], parts[2]
+          if env_part != "prod":
+              print(
+                  "error: stack_path must be under live/prod/… "
+                  '(got env=%r; use workflow "Terragrunt Destroy (preprod)" for dev/qa)'
+                  % (env_part,),
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if not re.fullmatch(r"[a-z0-9-]+", region_part):
+              print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
+              sys.exit(1)
+          live_env = "prod"
+          region_root = "/".join(parts[:3])
+
+          def module_names(root):
+              paths = glob.glob(os.path.join(root, "*", "terragrunt.hcl"))
+              return sorted({os.path.basename(os.path.dirname(p)) for p in paths})
+
+          def declared_deps(root, mod):
+              path = os.path.join(root, mod, "terragrunt.hcl")
+              with open(path, encoding="utf-8") as f:
+                  text = f.read()
+              return list(dict.fromkeys(DEP_RE.findall(text)))
+
+          def topo_apply_order(root, names):
+              name_set = set(names)
+              indeg = {n: 0 for n in names}
+              edges = defaultdict(list)
+              for m in names:
+                  for d in declared_deps(root, m):
+                      if d not in name_set:
+                          continue
+                      edges[d].append(m)
+                      indeg[m] += 1
+              q = deque(sorted(n for n in names if indeg[n] == 0))
+              out = []
+              while q:
+                  n = q.popleft()
+                  out.append(n)
+                  for w in sorted(edges[n]):
+                      indeg[w] -= 1
+                      if indeg[w] == 0:
+                          q.append(w)
+              if len(out) != len(names):
+                  print("cycle or unresolved deps", file=sys.stderr)
+                  sys.exit(1)
+              return out
+
+          if len(parts) == 4:
+              module_name = parts[3]
+              if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", module_name):
+                  print(f"error: invalid module name {module_name!r}", file=sys.stderr)
+                  sys.exit(1)
+              tg = os.path.join(region_root, module_name, "terragrunt.hcl")
+              if not os.path.isfile(tg):
+                  print(f"error: not found: {tg}", file=sys.stderr)
+                  sys.exit(1)
+              order = [module_name]
+          elif len(parts) == 3:
+              names = module_names(region_root)
+              if not names:
+                  print(f"error: no */terragrunt.hcl under {region_root}", file=sys.stderr)
+                  sys.exit(1)
+              order = topo_apply_order(region_root, names)
+              if MODE == "destroy":
+                  order = list(reversed(order))
+          else:
+              print("error: invalid stack_path", file=sys.stderr)
+              sys.exit(1)
+
+          obj = {
+              "matrix": [{"module": m} for m in order],
+              "live_env": live_env,
+              "stack_path": region_root,
+          }
+          print(json.dumps(obj))
+          PY
+          )
+          MATRIX=$(echo "$FULL" | jq -c '.matrix')
+          LIVE_ENV=$(echo "$FULL" | jq -r '.live_env')
+          STACK=$(echo "$FULL" | jq -r '.stack_path')
+
+          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "live_env=$LIVE_ENV" >> "$GITHUB_OUTPUT"
+          echo "stack_path=$STACK" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX live_env=$LIVE_ENV stack_path=$STACK"
+
+  destroy:
+    name: Destroy ${{ matrix.module }}
+    needs: [discover]
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"
+      TF_IN_AUTOMATION: "1"
+      TERRAGRUNT_NO_COLOR: "1"
+      TERRAGRUNT_FORWARD_TF_STDOUT: "1"
+      TERRAGRUNT_LOG_LEVEL: "error"
+      TF_CLI_ARGS: "-no-color"
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ needs.discover.outputs.stack_path }}/${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Install Terragrunt
+        env:
+          TG_VERSION_INPUT: ${{ vars.TG_VERSION }}
+        run: |
+          TG_VERSION="${TG_VERSION_INPUT:-0.67.16}"
+          wget -q -O terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+      - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout init -input=false --terragrunt-non-interactive
+      - run: terragrunt --terragrunt-no-color --terragrunt-forward-tf-stdout destroy -auto-approve -input=false --terragrunt-non-interactive
