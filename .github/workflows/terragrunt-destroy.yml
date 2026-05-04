@@ -1,12 +1,13 @@
 # Portable Terragrunt destroy — repo Variables: DEV_AWS_ROLE_ARN, QA_AWS_ROLE_ARN, PROD_AWS_ROLE_ARN, AWS_REGION (required)
-#   workflow_dispatch.stack_path (required): e.g. live/dev/us-east-1 — TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
+#   workflow_dispatch.stack_path: full region root live/<env>/<region> (destroy all stacks), OR add /<module> to destroy one stack only.
+#   TG_VERSION via vars.TG_VERSION (optional, default 0.67.16)
 name: Terragrunt Destroy
 
 on:
   workflow_dispatch:
     inputs:
       stack_path:
-        description: "Terragrunt stack root to destroy, e.g. live/dev/us-east-1, live/qa/us-east-1, live/prod/us-east-1"
+        description: "Region root: live/<env>/<region> (destroy all). Or one module: live/<env>/<region>/<module> e.g. live/dev/us-east-1/vpc"
         required: true
         type: string
 
@@ -42,10 +43,15 @@ jobs:
           MODE = os.environ.get("TG_MODE", "apply")
           DEP_RE = re.compile(r'config_path\s*=\s*"\.\./([^"]+)"')
 
-          parts = BASE.strip("/").split("/")
-          if len(parts) != 3 or parts[0] != "live":
-              print(f"error: stack_path must match live/<env>/<region>, got {BASE!r}", file=sys.stderr)
+          parts = [p for p in BASE.strip("/").split("/") if p]
+          if len(parts) < 3 or parts[0] != "live":
+              print(
+                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module>, "
+                  f"got {BASE!r}",
+                  file=sys.stderr,
+              )
               sys.exit(1)
+
           env_part, region_part = parts[1], parts[2]
           if env_part not in ("dev", "qa", "prod"):
               print(f"error: env must be dev, qa, or prod, got {env_part!r}", file=sys.stderr)
@@ -54,23 +60,24 @@ jobs:
               print(f"error: invalid region segment {region_part!r}", file=sys.stderr)
               sys.exit(1)
           live_env = env_part
+          region_root = "/".join(parts[:3])
 
-          def module_names():
-              paths = glob.glob(os.path.join(BASE, "*", "terragrunt.hcl"))
+          def module_names(root):
+              paths = glob.glob(os.path.join(root, "*", "terragrunt.hcl"))
               return sorted({os.path.basename(os.path.dirname(p)) for p in paths})
 
-          def declared_deps(mod):
-              path = os.path.join(BASE, mod, "terragrunt.hcl")
+          def declared_deps(root, mod):
+              path = os.path.join(root, mod, "terragrunt.hcl")
               with open(path, encoding="utf-8") as f:
                   text = f.read()
               return list(dict.fromkeys(DEP_RE.findall(text)))
 
-          def topo_apply_order(names):
+          def topo_apply_order(root, names):
               name_set = set(names)
               indeg = {n: 0 for n in names}
               edges = defaultdict(list)
               for m in names:
-                  for d in declared_deps(m):
+                  for d in declared_deps(root, m):
                       if d not in name_set:
                           continue
                       edges[d].append(m)
@@ -89,18 +96,37 @@ jobs:
                   sys.exit(1)
               return out
 
-          names = module_names()
-          if not names:
-              print(f"error: no */terragrunt.hcl under {BASE}", file=sys.stderr)
+          # Single module: live/<env>/<region>/<module>
+          if len(parts) == 4:
+              module_name = parts[3]
+              if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", module_name):
+                  print(f"error: invalid module name {module_name!r}", file=sys.stderr)
+                  sys.exit(1)
+              tg = os.path.join(region_root, module_name, "terragrunt.hcl")
+              if not os.path.isfile(tg):
+                  print(f"error: not found: {tg}", file=sys.stderr)
+                  sys.exit(1)
+              order = [module_name]
+          elif len(parts) == 3:
+              names = module_names(region_root)
+              if not names:
+                  print(f"error: no */terragrunt.hcl under {region_root}", file=sys.stderr)
+                  sys.exit(1)
+              order = topo_apply_order(region_root, names)
+              if MODE == "destroy":
+                  order = list(reversed(order))
+          else:
+              print(
+                  "error: stack_path must be live/<env>/<region> or live/<env>/<region>/<module> "
+                  f"(got {len(parts)} path segments in {BASE!r})",
+                  file=sys.stderr,
+              )
               sys.exit(1)
-          order = topo_apply_order(names)
-          if MODE == "destroy":
-              order = list(reversed(order))
 
           obj = {
               "matrix": [{"module": m} for m in order],
               "live_env": live_env,
-              "stack_path": BASE,
+              "stack_path": region_root,
           }
           print(json.dumps(obj))
           PY
