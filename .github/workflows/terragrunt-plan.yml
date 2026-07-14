@@ -317,3 +317,81 @@ jobs:
           path: plan
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Prep plan for AI
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          SRC="plan/unfiltered-plan/all-plans.md"
+          mkdir -p ai-input
+          if [ ! -s "$SRC" ]; then
+            echo "no plan at $SRC"; exit 0
+          fi
+          # strip ANSI, drop refresh/state noise, redact anything secret-shaped
+          sed -E 's/\x1B\[[0-9;]*[mK]//g' "$SRC" \
+            | grep -vE 'Refreshing state\.\.\.|Acquiring state lock|Reading\.\.\.|Read complete after' \
+            | sed -E 's/((password|secret|token|private_key|access_key)[^=:]*[:=][[:space:]]*).*/\1"***REDACTED***"/I' \
+            > ai-input/plan.md
+          # hard cap so Haiku never gets a truncated tail
+          if [ "$(wc -c < ai-input/plan.md)" -gt 180000 ]; then
+            { head -c 90000 ai-input/plan.md
+              printf '\n\n...[TRUNCATED — plan too large, summary may be incomplete]...\n\n'
+              tail -c 90000 ai-input/plan.md; } > ai-input/plan.tmp
+            mv ai-input/plan.tmp ai-input/plan.md
+          fi
+          wc -c ai-input/plan.md
+
+      - name: AI plan summary
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: "--max-turns 4 --model claude-haiku-4-5-20251001 --allowedTools Read,Write"
+          prompt: |
+            You are a senior DevOps engineer reviewing a Terragrunt plan for an AWS repo
+            (envs dev/qa/prod in us-east-1; modules: vpc, ec2, rds, s3, lambda-hello,
+            ssm-params, cloudfront).
+
+            1. Read ./ai-input/plan.md. That is the ONLY file you read. Do not read
+               ./plan/ — it contains duplicate views of the same plan and you would
+               double-count resources.
+            2. Write your summary to ./ai-plan-summary.md. Create no other files.
+               Modify no repo file. Run no terraform or terragrunt commands.
+
+            Be fast and direct. Speak like a colleague at a desk. No fluff, no preamble.
+            Never invent resources that are not in the plan. If you see a TRUNCATED
+            marker, say the summary may be incomplete.
+
+            Output EXACTLY these sections and nothing else:
+
+            ## 🤖 AI Plan Summary
+            **Verdict:** ✅ Safe to apply / ⚠️ Review needed / 🛑 Do not apply — one sentence why.
+            **What changes** — one line per stack (live/<env>/<region>): create X / update Y / replace Z / destroy N, plain English.
+            **Destroys & replacements** — resource address + what forced it. If none: "None."
+            **Risks I'd flag** — only real ones: data loss (RDS/S3/EBS), 0.0.0.0/0 ingress, public buckets, IAM wildcards, prod blast radius, missing deletion protection. If none: "Nothing scary."
+            **Noise / expected drift** — tag churn, timestamps, always-diff resources.
+            **Before you hit apply** — 2-4 concrete checks. If Safe: "Nothing — ship it."
+
+            Hard limit: 300 words.
+
+      - name: Comment summary on PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          [ -s ai-plan-summary.md ] || { echo "no summary produced"; exit 0; }
+          cat ai-plan-summary.md >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" --body-file ai-plan-summary.md \
+            --edit-last --create-if-none
+
+      - name: Upload AI summary
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-plan-summary-${{ github.run_id }}
+          path: ai-plan-summary.md
+          if-no-files-found: ignore
